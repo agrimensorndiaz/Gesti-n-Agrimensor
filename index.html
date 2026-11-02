@@ -405,12 +405,19 @@ const fmtDate=s=>{if(!s)return '—';const m=String(s).match(/^(\d{4})-(\d{2})-(
 const due=j=>Math.max(0,(Number(j.budget)||0)-(Number(j.paid)||0));
 const pendExp=j=>(j.expenses||[]).filter(e=>!e.paid).reduce((a,e)=>a+(Number(e.amount)||0),0);
 const stIdx=s=>Math.max(0,STAGES.indexOf(s));
-const phaseOf=j=>j.stage==='Presupuesto'?(Number(j.budget)>0?'Presupuesto enviado':'Por presupuestar'):j.stage;
-const phIdx=p=>Math.max(0,PHASES.indexOf(p));
+const phaseOf=j=>j.lostAt?'No aceptó':j.stage==='Presupuesto'?(Number(j.budget)>0?'Presupuesto enviado':'Por presupuestar'):j.stage;
+const phIdx=p=>p==='No aceptó'?8:Math.max(0,PHASES.indexOf(p));
 const phCls=p=>'st'+phIdx(p);
 const jCls=j=>phCls(phaseOf(j));
-const isActive=j=>j.stage!=='Terminado'||due(j)>0;
-const toMeasure=j=>j.stage==='Presupuesto'||j.stage==='Medición';
+const isActive=j=>!j.lostAt&&(j.stage!=='Terminado'||due(j)>0);
+/* Aceptado: pasó de Presupuesto o ya dejó una seña. Solo esos cuentan en Plata. */
+const accepted=j=>!j.lostAt&&(j.stage!=='Presupuesto'||(Number(j.paid)||0)>0);
+const owed=j=>accepted(j)?due(j):0;
+const reserveOf=j=>accepted(j)&&isActive(j)?pendExp(j):0;
+/* Días desde que se mandó el presupuesto (o desde la última consulta al cliente). */
+const quoteDays=j=>{const a=[j.quotedAt||j.stageAt,j.followedAt].filter(Boolean).sort().pop();return daysSince(a)};
+const digits=s=>String(s||'').replace(/\D/g,'');
+const toMeasure=j=>!j.lostAt&&(j.stage==='Presupuesto'||j.stage==='Medición');
 const pdate=s=>{const m=String(s||'').match(/^(\d{4})-(\d{2})-(\d{2})/);return m?new Date(+m[1],+m[2]-1,+m[3]):null};
 const ymd=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 const addDays=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x};
@@ -578,24 +585,31 @@ function todoItems(){
     if(j.stage==='Correcciones')out.push({j,text:'Hacer las correcciones que pidió Catastro',kind:'fix'});
     const days=daysSince(j.stageAt);
     if(j.stage==='Libro digital / Previa'&&days!==null&&days>=30)out.push({j,text:`Hace ${days} días en previa: consultar en Catastro`,kind:'stale'});
+    const qd=phaseOf(j)==='Presupuesto enviado'?quoteDays(j):null;
+    if(qd!==null&&qd>=7)out.push({j,text:`Presupuesto sin respuesta hace ${qd} días: llamar`,kind:'follow'});
   });
-  const ord=['fix','deliver','collect','stale'];
+  const ord=['fix','deliver','collect','follow','stale'];
   return out.sort((a,b)=>ord.indexOf(a.kind)-ord.indexOf(b.kind));
 }
 function todoHtml(){
   const items=todoItems();if(!items.length)return '';
-  const K={fix:['Corregir','st5'],deliver:['Entregar','st7'],collect:['Cobrar','st6'],stale:['Consultar','st4']};
+  const K={fix:['Corregir','st5'],deliver:['Entregar','st7'],collect:['Cobrar','st6'],follow:['Llamar','st1'],stale:['Consultar','st4']};
   return `<div class="block"><div class="label">Para hacer <span class="count">${items.length}</span></div><div class="rows">${items.map(({j,text,kind})=>`<div class="row tap ${K[kind][1].replace('st','strip')}" data-act="open" data-id="${esc(j.id)}"><div class="main"><div class="t1">${esc(j.client)}</div><div class="t2">${esc(text)}</div></div><span class="chip ${K[kind][1]}">${K[kind][0]}</span>${ICON_CHEV}</div>`).join('')}</div></div>`;
 }
 /* Trabajos que todavía hay que presupuestar: se carga el importe ahí mismo. */
 function quoteHtml(){
   const list=jobs.filter(j=>phaseOf(j)==='Por presupuestar').sort((a,b)=>(a.priority||2)-(b.priority||2)||String(a.start||'').localeCompare(String(b.start||'')));
   const types=workTypes();
+  /* Compacto: muestra 3 y el resto con "Ver todos"; el alta de cliente nuevo se abre con un botón. */
+  const shown=ui.quoteAll?list:list.slice(0,3),more=list.length-shown.length;
   let h=`<div class="quote"><div class="quote-h"><b>Para presupuestar</b><small>${list.length?list.length+' pendiente'+(list.length>1?'s':''):'Nada pendiente'}</small></div><div class="rows">`;
-  h+=list.map(j=>{const o=obsOf(j);const sub=[esc(j.type)];if(o)sub.push(esc(o));
+  h+=shown.map(j=>{const o=obsOf(j);const sub=[esc(j.type)];if(o)sub.push(esc(o));if(j.phone)sub.push('Tel. '+esc(j.phone));
     return `<div class="qrow"><div class="qtop" data-act="open" data-id="${esc(j.id)}"><div class="main"><div class="t1">${esc(j.client)}${j.priority===1?' <span class="hi">· Prioridad alta</span>':''}</div><div class="t2">${sub.join(' · ')}</div></div>${ICON_CHEV}</div>
       <form class="qform" data-form="quick" data-id="${esc(j.id)}"><input id="qb_${esc(docId(j.id))}" class="money-in num" inputmode="decimal" placeholder="Importe $" aria-label="Importe del presupuesto para ${esc(j.client)}"><button class="btn primary" type="submit">Listo</button></form></div>`}).join('');
-  h+=`<form class="qadd" data-form="quicknew"><input id="qnClient" class="search" placeholder="Anotar otro: cliente o lugar" autocomplete="off" style="padding:9px 10px">
+  if(more||ui.quoteAll&&list.length>3)h+=`<div class="add-line"><button class="link" data-act="quoteall">${more?`Ver los ${more} restantes`:'Ver menos'}</button></div>`;
+  if(!ui.qnOpen)return h+`<div class="add-line"><button class="btn full" data-act="qnopen">+ Cliente nuevo para presupuestar</button></div></div></div>`;
+  h+=`<form class="qadd" data-form="quicknew"><input id="qnClient" class="search" placeholder="Nombre del cliente" autocomplete="off" style="padding:9px 10px">
+    <div class="qform"><input id="qnPhone" type="tel" inputmode="tel" placeholder="Teléfono" autocomplete="off" aria-label="Teléfono"><input id="qnLoc" placeholder="Lugar" autocomplete="off" aria-label="Lugar"></div>
     <div class="qform"><select id="qnType" aria-label="Tipo de trabajo">${types.map(t=>`<option>${esc(t)}</option>`).join('')}</select><button class="btn" type="submit">Agregar</button></div></form>`;
   return h+`</div></div>`;
 }
@@ -608,13 +622,13 @@ function homeHtml(){
   const counts=PHASES.slice(0,8).map(s=>[s,jobs.filter(j=>phaseOf(j)===s).length]);
   const unpaidDone=jobs.filter(j=>j.stage==='Terminado'&&due(j)>0).length;
 
-  let h=`<section class="view">${duesHtml()}${backupHtml()}
-  <button class="active-total" data-act="filter" data-f="active"><span>Trabajos activos</span><b class="num">${active.length}</b>${ICON_CHEV}</button>`;
-
-  h+=quoteHtml();
-  h+=notesTodayHtml();
+  /* Primero lo de hoy; los resúmenes van al final. */
+  let h=`<section class="view">${duesHtml()}${notesTodayHtml()}`;
   h+=todoHtml();
+  h+=quoteHtml();
   h+=agendaHtml();
+  h+=backupHtml();
+  h+=`<button class="active-total" data-act="filter" data-f="active"><span>Trabajos activos</span><b class="num">${active.length}</b>${ICON_CHEV}</button>`;
   h+=`<div class="block"><div class="label">Por etapa</div><div class="stages">
     ${counts.map(([s,n])=>`<button class="stage-btn ${n?'':'zero'}" data-act="filter" data-f="${esc(s)}"><span class="dot ${phCls(s)}"></span><span class="nm">${esc(s)}</span><span class="n num">${n}</span></button>`).join('')}
     <button class="stage-btn ${unpaidDone?'':'zero'}" data-act="filter" data-f="unpaid"><span class="dot st8"></span><span class="nm">Terminado sin cobrar</span><span class="n num">${unpaidDone}</span></button>
@@ -645,7 +659,9 @@ function filteredJobs(){
   let arr=[...jobs];
   const fold=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
   const q=fold(ui.q.trim());
-  if(q)arr=arr.filter(j=>[j.client,j.exp,j.type,j.phone,obsOf(j),j.partida,partidaDigits(j.partida),j.stage,(j.tasks||[]).map(t=>t.text).join(' ')].some(v=>fold(v).includes(q)));
+  /* Teléfono: se comparan solo los últimos 6 números (así "+54 9 3482 30-5635" encuentra "3482 15 305635"). */
+  const qd=digits(ui.q),qtel=qd.length>=6?qd.slice(-6):'';
+  if(q)arr=arr.filter(j=>[j.client,j.exp,j.type,j.phone,obsOf(j),j.partida,partidaDigits(j.partida),j.stage,(j.tasks||[]).map(t=>t.text).join(' ')].some(v=>fold(v).includes(q))||(qtel&&digits(j.phone).includes(qtel)));
   const f=ui.filter;
   if(f==='active')arr=arr.filter(isActive);
   else if(f==='unpaid')arr=arr.filter(j=>j.stage==='Terminado'&&due(j)>0);
@@ -660,13 +676,13 @@ function jobRow(j){
   const pt=(j.tasks||[]).filter(t=>!t.done).length;
   const days=daysSince(j.stageAt);
   const late=days!==null&&days>=30&&isActive(j);
-  const d=due(j);
+  const d=owed(j),quote=!accepted(j)&&Number(j.budget)>0;
   const meta=[esc(j.type)];
   if(j.exp)meta.push('Exp. '+esc(j.exp));
   return `<div class="row tap strip${phIdx(phaseOf(j))}" data-act="open" data-id="${esc(j.id)}">
     <div class="main"><div class="t1">${esc(j.client)}</div>
       <div class="t2"><span>${meta.join(' · ')}</span>${toMeasure(j)&&pdate(j.fieldDate)?`<span class="meas">Medir ${fmtDay(j.fieldDate)}</span>`:''}${j.priority===1?'<span class="hi">Prioridad alta</span>':''}${pt?`<span>${pt} tarea${pt>1?'s':''}</span>`:''}${late?`<span class="late">${days} días quieto</span>`:''}</div></div>
-    <div class="amt num">${d>0?money(d):'—'}<small>${d>0?'a cobrar':Number(j.budget)>0?'cobrado':'sin importe'}</small></div>${ICON_CHEV}</div>`;
+    <div class="amt num">${d>0?money(d):quote?money(j.budget):'—'}<small>${d>0?'a cobrar':quote?(j.lostAt?'no aceptó':'presupuestado'):Number(j.budget)>0?'cobrado':'sin importe'}</small></div>${ICON_CHEV}</div>`;
 }
 function jobsHtml(){
   const arr=filteredJobs();
@@ -684,11 +700,12 @@ function jobsHtml(){
 
 /* ----- Plata ----- */
 function moneyHtml(){
-  const toCollect=jobs.reduce((s,j)=>s+due(j),0);
-  const reserve=jobs.reduce((s,j)=>s+(isActive(j)?pendExp(j):0),0);
+  const toCollect=jobs.reduce((s,j)=>s+owed(j),0);
+  const reserve=jobs.reduce((s,j)=>s+reserveOf(j),0);
+  const quoted=jobs.filter(j=>!accepted(j)&&!j.lostAt&&Number(j.budget)>0);
   const ym=today().slice(0,7);
   const month=jobs.reduce((s,j)=>s+(j.payments||[]).filter(p=>String(p.date||'').startsWith(ym)).reduce((a,p)=>a+(Number(p.amount)||0),0),0);
-  const list=jobs.filter(j=>due(j)>0||(isActive(j)&&pendExp(j)>0)).sort((a,b)=>due(b)-due(a));
+  const list=jobs.filter(j=>owed(j)>0||reserveOf(j)>0).sort((a,b)=>owed(b)-owed(a));
   const mName=new Date().toLocaleDateString('es-AR',{month:'long'});
   let h=`<section class="view">
   <div class="stats">
@@ -699,14 +716,14 @@ function moneyHtml(){
   <div class="block"><div class="label">Por trabajo <span class="count">${list.length}</span></div>`;
   if(!list.length)h+=`<div class="rows"><div class="empty">No hay saldos ni gastos pendientes.</div></div>`;
   else h+=`<div class="tbl-wrap"><table><thead><tr><th>Cliente</th><th class="r">A cobrar</th><th class="r">Gastos pend.</th></tr></thead><tbody>
-    ${list.map(j=>`<tr class="tap" data-act="open" data-id="${esc(j.id)}"><td class="cli">${esc(j.client)}<small>${esc(phaseOf(j))}</small></td><td class="r num">${due(j)?money(due(j)):'—'}</td><td class="r num">${isActive(j)&&pendExp(j)?money(pendExp(j)):'—'}</td></tr>`).join('')}
+    ${list.map(j=>`<tr class="tap" data-act="open" data-id="${esc(j.id)}"><td class="cli">${esc(j.client)}<small>${esc(phaseOf(j))}</small></td><td class="r num">${owed(j)?money(owed(j)):'—'}</td><td class="r num">${reserveOf(j)?money(reserveOf(j)):'—'}</td></tr>`).join('')}
     </tbody><tfoot><tr><td>Total</td><td class="r num">${money(toCollect)}</td><td class="r num">${money(reserve)}</td></tr></tfoot></table></div>`;
   const months=[];for(let i=5;i>=0;i--){const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-i);months.push({name:d.toLocaleDateString('es-AR',{month:'short'}).replace('.',''),key:ymd(d).slice(0,7),v:0})}
   jobs.forEach(j=>(j.payments||[]).forEach(p=>{const m=months.find(x=>String(p.date||'').startsWith(x.key));if(m)m.v+=Number(p.amount)||0}));
   const mx=Math.max(1,...months.map(m=>m.v)),m6=months.reduce((a,m)=>a+m.v,0);
   h+=`</div><div class="block"><div class="label">Cobrado por mes <span class="count">Últimos 6 meses: ${money(m6)}</span></div><div class="rows">
     ${months.map(m=>`<div class="mbar ${m.key===ym?'cur':''}"><span class="m">${esc(m.name)}</span><span class="bar"><i style="width:${(m.v/mx*100).toFixed(1)}%"></i></span><b class="num">${m.v?money(m.v):'—'}</b></div>`).join('')}</div>`;
-  h+=`</div><div class="block"><div class="label">Exportar estado de todos los trabajos</div><div class="btn-row"><button class="btn" data-act="xlsx">Excel</button><button class="btn" data-act="pdfrep">PDF</button></div></div><div class="note info">"Reservar gastos" es la plata que conviene tener apartada para los gastos de trabajos activos que todavía no marcaste como pagados.</div>`;
+  h+=`</div><div class="block"><div class="label">Exportar estado de todos los trabajos</div><div class="btn-row"><button class="btn" data-act="xlsx">Excel</button><button class="btn" data-act="pdfrep">PDF</button></div></div><div class="note info">"A cobrar" y "Reservar gastos" cuentan solo trabajos aceptados (de Medición en adelante, o con seña). "Reservar gastos" es la plata que conviene tener apartada para los gastos que todavía no marcaste como pagados.${quoted.length?` Además hay ${quoted.length} presupuesto${quoted.length>1?'s':''} enviado${quoted.length>1?'s':''} sin respuesta por ${money(quoted.reduce((s,j)=>s+(Number(j.budget)||0),0))}.`:''}</div>`;
   return h+`</section>`;
 }
 
@@ -748,11 +765,16 @@ function jobSheet(j){
       <input type="date" class="date-in" id="fieldDateIn" data-field-date="${esc(j.id)}" value="${esc(j.fieldDate||'')}" aria-label="Elegir fecha de medición"></div>
       <div class="tog">${opts.map(([l,d])=>`<button data-act="setfield" data-id="${esc(j.id)}" data-d="${d}" aria-pressed="${j.fieldDate===d}">${l} <span class="num">${fmtDay(d).split(' ')[1]}</span></button>`).join('')}${j.fieldDate?`<button data-act="setfield" data-id="${esc(j.id)}" data-d="">Quitar fecha</button>`:''}</div>${calStatusHtml(j)}</div>`;
   }
-  if(j.stage==='Presupuesto'&&!(Number(j.budget)>0)){
+  if(j.lostAt){
+    h+=`<div class="note info"><b>No aceptó el presupuesto</b> (${fmtDate(j.lostAt)}). No cuenta en Plata ni en los activos.</div><button class="btn full" data-act="unlost" data-id="${esc(j.id)}">Volver a activar el presupuesto</button>`;
+  } else if(j.stage==='Presupuesto'&&!(Number(j.budget)>0)){
     h+=`<form class="panel form" style="padding:12px" data-form="budget" data-id="${esc(j.id)}"><div class="field"><label for="budgetIn">Importe del presupuesto</label><input id="budgetIn" class="money-in num" inputmode="decimal" placeholder="$ 0"></div><button class="btn primary full" type="submit">Guardar presupuesto</button></form>`;
   } else if(j.stage!=='Terminado'){
     if(j.stage==='Presupuesto')h+=`<button class="btn full" data-act="budgetpdf" data-id="${esc(j.id)}">Presupuesto en PDF para el cliente</button>`;
     h+=`<button class="btn primary full" data-act="advance" data-id="${esc(j.id)}">${esc(NEXT_LABEL[j.stage])}</button>`;
+    if(j.stage==='Presupuesto'){const qd=quoteDays(j);
+      h+=`<div class="panel" style="padding:12px;display:flex;flex-direction:column;gap:8px"><small>${qd===null?'Presupuesto enviado':qd===0?'Presupuesto enviado o consultado hoy':`Hace ${qd} día${qd===1?'':'s'} que se mandó o se consultó`}. Si no contesta, a los 7 días aparece en "Para hacer".</small>
+        <div class="btn-row"><button class="btn" data-act="followed" data-id="${esc(j.id)}">Ya lo consulté</button><button class="btn" data-act="lost" data-id="${esc(j.id)}">No aceptó</button></div></div>`}
   } else {
     h+=d>0?`<div class="note warn"><b>Terminado, falta cobrar ${money(d)}.</b> Cuando registres el cobro total queda finalizado.</div>`:`<div class="note ok"><b>Trabajo finalizado y cobrado.</b></div>`;
   }
@@ -1116,8 +1138,10 @@ function noteRow(t,showDay){
 function notesTodayHtml(){
   const td=today(),open=tasks.filter(t=>!t.done);
   const list=open.filter(t=>t.date<=td).sort(noteOrder),next=open.length-list.length;
-  return `<div class="block"><div class="label">Agenda de hoy <span class="count">${list.length?list.length+' pendiente'+(list.length>1?'s':''):''}</span></div><div class="rows">
+  const meas=jobs.filter(j=>toMeasure(j)&&!j.lostAt&&j.fieldDate===td),n=list.length+meas.length;
+  return `<div class="block"><div class="label">Hoy <span class="count">${n?n+' pendiente'+(n>1?'s':''):''}</span></div><div class="rows">
     <form class="add-line" data-form="notetoday"><input id="ntText" placeholder="Anotar algo para hoy…" autocomplete="off" enterkeyhint="done"><button class="btn sm primary" type="submit">Agregar</button></form>
+    ${meas.map(j=>`<div class="row tap strip2" data-act="open" data-id="${esc(j.id)}"><div class="main"><div class="t1">Medir: ${esc(j.client)}</div><div class="t2">${esc(j.type)}${j.partida?' · '+esc(j.partida):''}</div></div><span class="chip st2">Medición</span>${ICON_CHEV}</div>`).join('')}
     ${list.map(t=>noteRow(t,false)).join('')}
     <div class="add-line"><button class="link" data-act="tab" data-v="agenda">Ver toda la agenda${next?` · ${next} más adelante`:''}</button></div></div></div>`;
 }
@@ -1426,7 +1450,7 @@ function buildReport(){
   const newPage=first=>{c=[];pages.push(c);rect(0,H-6,W,6,A);
     txt(L,H-34,'Estado de trabajos',first?18:11,'F2',INK);rtxt(R,H-34,(settings.profName||'')+' · '+fmtDate(today()),9,'F1',MUT);y=H-(first?60:52)};
   newPage(true);
-  const act=jobs.filter(isActive);const tc=jobs.reduce((s,j)=>s+due(j),0);const tr=act.reduce((s,j)=>s+pendExp(j),0);
+  const act=jobs.filter(isActive);const tc=jobs.reduce((s,j)=>s+owed(j),0);const tr=jobs.reduce((s,j)=>s+reserveOf(j),0);
   const ym=today().slice(0,7);const month=jobs.reduce((s,j)=>s+(j.payments||[]).filter(p=>String(p.date||'').startsWith(ym)).reduce((a,p)=>a+(Number(p.amount)||0),0),0);
   [['Trabajos activos',String(act.length)],['A cobrar',money(tc)],['Gastos a reservar',money(tr)],['Cobrado este mes',money(month)]].forEach(([k,v],i)=>{
     const x=L+i*((R-L)/4);txt(x,y,k.toUpperCase(),7,'F2',MUT);txt(x,y-18,v,15,'F2',INK)});
@@ -1517,6 +1541,11 @@ document.addEventListener('click',e=>{
     case 'advance':if(j)advance(j);break;
     case 'back':if(j&&armed(el,'Tocá de nuevo para volver'))back(j);break;
     case 'more':ui.moreOpen=!ui.moreOpen;renderSheet();break;
+    case 'quoteall':ui.quoteAll=!ui.quoteAll;renderView();break;
+    case 'qnopen':ui.qnOpen=true;renderView();$('#qnClient')?.focus();break;
+    case 'lost':if(j&&armed(el,'Tocá de nuevo para confirmar')){j.lostAt=new Date().toISOString();saveJob(j);renderSheet();toast(j.client+': no aceptó · queda en Finalizados')}break;
+    case 'unlost':if(j){delete j.lostAt;saveJob(j);renderSheet();toast('Presupuesto activo de nuevo')}break;
+    case 'followed':if(j){j.followedAt=new Date().toISOString();saveJob(j);renderSheet();toast('Te lo recuerdo en 7 días')}break;
     case 'edit':openSheet({kind:'form',id});break;
     case 'deljob':if(j&&armed(el,'Tocá de nuevo para eliminar')){closeSheet();const ev=j.calEventId;removeJob(j);toast('Trabajo eliminado');
       if(ev&&calOn())getMcp().then(m=>m&&m.callTool(CAL,'delete_event',{eventId:ev,notificationLevel:'NONE'}).catch(()=>{}))}break;
@@ -1607,10 +1636,10 @@ document.addEventListener('submit',e=>{
       Object.assign(t,{text,date,time:v('nTime'),jobId:v('nJob')});noteSave(t);closeSheet();toast('Nota guardada');break}
     case 'gcid':{settings.gClientId=v('gCid');gTokenClient=null;saveSettings();if(gClientId())gLoad().catch(()=>{});toast('Guardado');break}
     case 'jobtask':{const text=v('newJobTask');if(!text||!j)return;j.tasks=j.tasks||[];j.tasks.unshift({id:uid(),text,done:false,created:new Date().toISOString()});saveJob(j);renderSheet();setTimeout(()=>$('#newJobTask')?.focus(),0);break}
-    case 'quick':{if(!j)return;const inp=f.querySelector('input');const a=parseMoney(inp&&inp.value);if(!(a>0)){toast('Escribí el importe del presupuesto');inp&&inp.focus();return}if(inp)inp.value='';j.budget=a;saveJob(j);toast(j.client+': '+money(a)+' · pasa a Presupuesto enviado');break}
-    case 'quicknew':{const client=v('qnClient'),type=v('qnType')||workTypes()[0]||'';if(!client){toast('Escribí el cliente o el lugar');$('#qnClient')?.focus();return}$('#qnClient').value='';
-      const nj=normJob({id:Date.now().toString(),client,type,budget:0,priority:2,start:today(),stage:'Presupuesto',stageAt:new Date().toISOString(),paid:0,payments:[],tasks:[],expenses:expensesForType(type),obs:'',loc:'',phone:''});jobs.push(nj);saveJob(nj);toast('Anotado para presupuestar');setTimeout(()=>$('#qnClient')?.focus(),0);break}
-    case 'budget':{const a=parseMoney(v('budgetIn'));if(!(a>0)){toast('Escribí un importe mayor a cero');return}j.budget=a;saveJob(j);toast('Presupuesto guardado');break}
+    case 'quick':{if(!j)return;const inp=f.querySelector('input');const a=parseMoney(inp&&inp.value);if(!(a>0)){toast('Escribí el importe del presupuesto');inp&&inp.focus();return}if(inp)inp.value='';j.budget=a;j.quotedAt=new Date().toISOString();saveJob(j);toast(j.client+': '+money(a)+' · pasa a Presupuesto enviado');break}
+    case 'quicknew':{const client=v('qnClient'),type=v('qnType')||workTypes()[0]||'',phone=v('qnPhone'),loc=v('qnLoc');if(!client){toast('Escribí el nombre del cliente');$('#qnClient')?.focus();return}['qnClient','qnPhone','qnLoc'].forEach(k=>{const el=document.getElementById(k);if(el)el.value=''});
+      const nj=normJob({id:Date.now().toString(),client,type,budget:0,priority:2,start:today(),stage:'Presupuesto',stageAt:new Date().toISOString(),paid:0,payments:[],tasks:[],expenses:expensesForType(type),obs:loc?'Lugar: '+loc:'',loc:'',phone});jobs.push(nj);saveJob(nj);toast('Anotado para presupuestar');setTimeout(()=>$('#qnClient')?.focus(),0);break}
+    case 'budget':{const a=parseMoney(v('budgetIn'));if(!(a>0)){toast('Escribí un importe mayor a cero');return}j.budget=a;j.quotedAt=new Date().toISOString();saveJob(j);toast('Presupuesto guardado');break}
     case 'job':{
       const client=v('fClient'),type=v('fType');if(!client){err('Falta el nombre del cliente.');return}
       const partida=fmtPartida(v('fPartida'));if(partida&&partidaDigits(partida).length!==16){err('La partida tiene que tener 16 números, así: 03-08-00 514819/0001.');return}
