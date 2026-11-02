@@ -495,7 +495,7 @@ function mergeSnap(kind,current,docs,norm){
   pend[kind].forEach((o,id)=>{if(!out.has(id)||String(out.get(id).updatedAt||'')<String(o.updatedAt||''))out.set(id,o)});
   return [...out.values()];
 }
-function saveJob(j){if(db)putDoc('jobs',j);else{j.updatedAt=stamp();writeLocal()}refresh()}
+function saveJob(j){if(db)putDoc('jobs',j);else{j.updatedAt=stamp();writeLocal()}refresh();if(gs.linked&&measDirty(j))gSoon()}
 function removeJob(j){jobs=jobs.filter(x=>x!==j);if(db)delDoc('jobs',j);else writeLocal();refresh()}
 let settingsPend=null;
 function saveSettings(){settings.updatedAt=stamp();if(db){const body=clean(settings),st=settings.updatedAt;settingsPend=st;queueWrite(()=>db.doc('app/settings').set(body)).then(()=>{if(settingsPend===st)settingsPend=null}).catch(()=>{})}else writeLocal();refresh()}
@@ -647,7 +647,7 @@ function agendaHtml(){
   const groups=[['Atrasadas',dated.filter(j=>j.fieldDate<td)],['Esta semana',dated.filter(j=>j.fieldDate>=td&&j.fieldDate<nw)],['Semana que viene',dated.filter(j=>j.fieldDate>=nw&&j.fieldDate<nnw)],['Más adelante',dated.filter(j=>j.fieldDate>=nnw)]];
   const row=j=>{const d=pdate(j.fieldDate);const late=j.fieldDate<td;const isToday=j.fieldDate===td;
     return `<div class="row tap" data-act="open" data-id="${esc(j.id)}"><div class="day ${late?'late-day':isToday?'today':''}"><span>${isToday?'hoy':DOW[d.getDay()]}</span><b class="num">${d.getDate()}</b></div>
-    <div class="main"><div class="t1">${esc(j.client)}</div><div class="t2"><span>${esc(j.type)}${j.partida?' · '+esc(j.partida):''}</span>${j.stage==='Presupuesto'?`<span class="chip ${jCls(j)}">${esc(phaseOf(j))}</span>`:''}</div></div>${ICON_CHEV}</div>`};
+    <div class="main"><div class="t1">${esc(j.client)}</div><div class="t2">${j.fieldTime?`<span class="num">${esc(j.fieldTime)} hs</span>`:''}<span>${esc(j.type)}${j.partida?' · '+esc(j.partida):''}</span>${j.stage==='Presupuesto'?`<span class="chip ${jCls(j)}">${esc(phaseOf(j))}</span>`:''}</div></div>${ICON_CHEV}</div>`};
   let h=`<div class="block"><div class="label">Mediciones <span class="count">${dated.length} con fecha</span></div>`;
   groups.forEach(([name,list])=>{if(!list.length)return;h+=`<div class="sub-h ${name==='Atrasadas'?'late':''}">${name}</div><div class="rows">${list.map(row).join('')}</div>`});
   if(noDate.length)h+=`<button class="nodate" data-act="filter" data-f="nodate">${noDate.length} trabajo${noDate.length>1?'s':''} en Medición sin fecha · organizar ${ICON_CHEV}</button>`;
@@ -661,7 +661,7 @@ function filteredJobs(){
   const q=fold(ui.q.trim());
   /* Teléfono: se comparan solo los últimos 6 números (así "+54 9 3482 30-5635" encuentra "3482 15 305635"). */
   const qd=digits(ui.q),qtel=qd.length>=6?qd.slice(-6):'';
-  if(q)arr=arr.filter(j=>[j.client,j.exp,j.type,j.phone,obsOf(j),j.partida,partidaDigits(j.partida),j.stage,(j.tasks||[]).map(t=>t.text).join(' ')].some(v=>fold(v).includes(q))||(qtel&&digits(j.phone).includes(qtel)));
+  if(q)arr=arr.filter(j=>[j.client,j.exp,j.type,j.phone,obsOf(j),j.partida,partidaDigits(j.partida),j.stage,tasks.filter(t=>String(t.jobId)===String(j.id)).map(t=>t.text).join(' ')].some(v=>fold(v).includes(q))||(qtel&&digits(j.phone).includes(qtel)));
   const f=ui.filter;
   if(f==='active')arr=arr.filter(isActive);
   else if(f==='unpaid')arr=arr.filter(j=>j.stage==='Terminado'&&due(j)>0);
@@ -673,7 +673,7 @@ function filteredJobs(){
   return arr;
 }
 function jobRow(j){
-  const pt=(j.tasks||[]).filter(t=>!t.done).length;
+  const pt=tasks.filter(t=>!t.done&&String(t.jobId)===String(j.id)).length;
   const days=daysSince(j.stageAt);
   const late=days!==null&&days>=30&&isActive(j);
   const d=owed(j),quote=!accepted(j)&&Number(j.budget)>0;
@@ -761,8 +761,8 @@ function jobSheet(j){
   if(toMeasure(j)){
     const t=new Date();const ws=weekStart(t);
     const opts=[['Mañana',ymd(addDays(t,1))],['Lunes que viene',ymd(addDays(ws,7))],['Miércoles que viene',ymd(addDays(ws,9))],['Viernes que viene',ymd(addDays(ws,11))]];
-    h+=`<div class="panel meas-box"><div class="meas-top"><div><small>Medición prevista</small><b>${pdate(j.fieldDate)?fmtDay(j.fieldDate)+' '+pdate(j.fieldDate).getFullYear():'Sin fecha'}</b></div>
-      <input type="date" class="date-in" id="fieldDateIn" data-field-date="${esc(j.id)}" value="${esc(j.fieldDate||'')}" aria-label="Elegir fecha de medición"></div>
+    h+=`<div class="panel meas-box"><div class="meas-top"><div><small>Medición prevista</small><b>${pdate(j.fieldDate)?fmtDay(j.fieldDate)+' '+pdate(j.fieldDate).getFullYear()+(j.fieldTime?' · '+esc(j.fieldTime)+' hs':''):'Sin fecha'}</b></div>
+      <div style="display:flex;gap:6px"><input type="date" class="date-in" id="fieldDateIn" data-field-date="${esc(j.id)}" value="${esc(j.fieldDate||'')}" aria-label="Elegir fecha de medición">${j.fieldDate?`<input type="time" class="date-in" data-field-time="${esc(j.id)}" value="${esc(j.fieldTime||'')}" aria-label="Hora de la medición (opcional)">`:''}</div></div>
       <div class="tog">${opts.map(([l,d])=>`<button data-act="setfield" data-id="${esc(j.id)}" data-d="${d}" aria-pressed="${j.fieldDate===d}">${l} <span class="num">${fmtDay(d).split(' ')[1]}</span></button>`).join('')}${j.fieldDate?`<button data-act="setfield" data-id="${esc(j.id)}" data-d="">Quitar fecha</button>`:''}</div>${calStatusHtml(j)}</div>`;
   }
   if(j.lostAt){
@@ -796,16 +796,14 @@ function jobSheet(j){
     ${exps.length?`<div class="row total-row"><div class="main"><div class="t1">Total de gastos</div><div class="t2">Presupuesto menos gastos: ${money((Number(j.budget)||0)-te)}</div></div><div class="amt num">${money(te)}</div></div>`:''}
     <div class="add-line"><button class="link" data-act="addexp" data-id="${esc(j.id)}">+ Agregar gasto</button></div></div></div>`;
 
-  const ts=j.tasks||[];const tp=ts.filter(t=>!t.done),td=ts.filter(t=>t.done);
-  h+=`<div class="block"><div class="label">Tareas de este trabajo <span class="count">${tp.length?tp.length+' pendiente'+(tp.length>1?'s':''):''}</span></div><div class="rows">
-    <form class="add-line" data-form="jobtask" data-id="${esc(j.id)}"><input id="newJobTask" placeholder="Ej.: pagar CCU, llamar al cliente" autocomplete="off"><button class="btn sm primary" type="submit">Agregar</button></form>
-    ${tp.map(t=>`<div class="row"><input type="checkbox" class="check" data-act="jobtask" data-id="${esc(j.id)}" data-t="${esc(t.id)}" aria-label="Marcar hecha"><div class="main"><div class="t1">${esc(t.text)}</div></div></div>`).join('')}
-    ${td.map(t=>`<div class="row done"><input type="checkbox" class="check" checked data-act="jobtask" data-id="${esc(j.id)}" data-t="${esc(t.id)}" aria-label="Desmarcar"><div class="main"><div class="t1">${esc(t.text)}</div></div><button class="small-act" data-act="deljobtask" data-id="${esc(j.id)}" data-t="${esc(t.id)}">Borrar</button></div>`).join('')}
-  </div></div>`;
-  const jn=tasks.filter(t=>!t.done&&String(t.jobId)===String(j.id)).sort(noteOrder);
-  h+=`<div class="block"><div class="label">En la agenda <span class="count">${jn.length?jn.length+' pendiente'+(jn.length>1?'s':''):''}</span></div><div class="rows">
+  /* Pendientes y cosas hechas de este trabajo: todo vive en la Agenda. */
+  const mine=tasks.filter(t=>String(t.jobId)===String(j.id));
+  const jn=mine.filter(t=>!t.done).sort(noteOrder),jd=mine.filter(t=>t.done).sort((a,b)=>String(b.completed||b.date).localeCompare(String(a.completed||a.date)));
+  h+=`<div class="block"><div class="label">Agenda de este trabajo <span class="count">${jn.length?jn.length+' pendiente'+(jn.length>1?'s':''):''}</span></div><div class="rows">
+    ${noteAddHtml('jobnote','jnText','Ej.: pagar CCU, llamar al cliente',j.id)}
     ${jn.map(t=>noteRow(t,true)).join('')}
-    <div class="add-line"><button class="link" data-act="agfor" data-id="${esc(j.id)}">+ Anotar en la agenda para este trabajo</button></div></div></div>`;
+    ${jd.slice(0,ui.jobDoneAll?50:3).map(t=>noteRow(t,true)).join('')}
+    <div class="add-line" style="justify-content:space-between"><button class="link" data-act="agfor" data-id="${esc(j.id)}">+ Con fecha u hora</button>${jd.length>3?`<button class="link" data-act="jobdoneall">${ui.jobDoneAll?'Ver menos':'Ver las '+jd.length+' hechas'}</button>`:''}</div></div></div>`;
 
   const msg=clientMsg(j),wl=waLink(j,msg);
   if(msg)h+=`<div class="block"><div class="label">Mensaje para el cliente</div><div class="msg" id="stageMsg">${esc(msg)}</div><div class="btn-row"><button class="btn" data-act="copymsg">Copiar mensaje</button>${wl?`<a class="btn wa" href="${esc(wl)}" target="_blank" rel="noopener">Enviar por WhatsApp</a>`:''}</div></div>`;
@@ -990,13 +988,11 @@ async function calSyncAll(){
   let ok=0;for(const j of list){await calSync(j.id,{quiet:true});if(calSynced(getJob(j.id)||{}))ok++;else break}
   toast(ok===list.length?`${ok} medición${ok>1?'es':''} agendada${ok>1?'s':''}`:(calErr[list[ok]&&list[ok].id]||'No se pudieron agendar todas'));
 }
+/* Estado de la medición en el calendario "Agenda Agrimensor". */
 function calStatusHtml(j){
-  if(!calOn()||!mcp)return '';
-  if(calBusy.has(String(j.id)))return `<div class="cal-st">Actualizando Google Calendar…</div>`;
-  if(calErr[j.id])return `<div class="cal-st err">${esc(calErr[j.id])} <button class="link" data-act="calsync" data-id="${esc(j.id)}">Reintentar</button></div>`;
-  if(j.fieldDate&&calSynced(j))return `<div class="cal-st ok">En tu Google Calendar</div>`;
-  if(j.fieldDate)return `<div class="cal-st">No está en tu calendario. <button class="link" data-act="calsync" data-id="${esc(j.id)}">Agendar</button></div>`;
-  return '';
+  if(!j.fieldDate||!gs.linked)return '';
+  if(j.gMeasId&&!measDirty(j))return `<div class="cal-st ok">En Google Calendar</div>`;
+  return `<div class="cal-st">${gTokenOk()?'Subiendo a Google Calendar…':'Se sube a Google Calendar cuando se actualice la Agenda.'}</div>`;
 }
 
 /* ===================== Agenda ===================== */
@@ -1022,7 +1018,7 @@ let gs=(()=>{try{return JSON.parse(localStorage.getItem(GKEY)||'null')||{}}catch
 function gSave(){try{localStorage.setItem(GKEY,JSON.stringify(gs))}catch(e){}}
 const gClientId=()=>String(GOOGLE_CLIENT_ID||settings.gClientId||'').trim();
 const gTokenOk=()=>!!(gs.token&&gs.exp>Date.now()+60000);
-const gPending=()=>tasks.filter(t=>t.dirty&&t.date&&(t.gId||!t.done)).length+(gs.del||[]).length;
+const gPending=()=>tasks.filter(t=>t.dirty&&t.date).length+(gs.del||[]).length+jobs.filter(measDirty).length;
 let gBusy=false,gAgain=false,gErr='',gTimer=null,gTokenClient=null,gLoading=null;
 const gisReady=()=>!!(window.google&&google.accounts&&google.accounts.oauth2);
 function gLoad(){
@@ -1061,10 +1057,26 @@ function noteEvent(t){
   const ev={summary:(t.done?'✓ ':'')+t.text,
     description:[j?'Trabajo: '+j.client+(j.type?' — '+j.type:''):'','Anotado desde Gestión Agrimensor.'].filter(Boolean).join('\n'),
     extendedProperties:{private:{ga:'1',noteId:String(t.id),jobId:t.jobId||''}}};
-  if(t.time){const [h,m]=t.time.split(':').map(Number);const e=pdate(t.date);e.setHours(h,m+30);
-    ev.start={dateTime:t.date+'T'+t.time+':00',timeZone:TZ,date:null};ev.end={dateTime:ymd(e)+'T'+hm(e)+':00',timeZone:TZ,date:null}}
-  else{ev.start={date:t.date,dateTime:null,timeZone:null};ev.end={date:ymd(addDays(pdate(t.date),1)),dateTime:null,timeZone:null}}
+  return setWhen(ev,t.date,t.time,30);
+}
+/* Fecha del evento: con hora dura "mins" minutos; sin hora es de día completo. */
+function setWhen(ev,date,time,mins){
+  if(time){const [h,m]=time.split(':').map(Number);const e=pdate(date);e.setHours(h,m+mins);
+    ev.start={dateTime:date+'T'+time+':00',timeZone:TZ,date:null};ev.end={dateTime:ymd(e)+'T'+hm(e)+':00',timeZone:TZ,date:null}}
+  else{ev.start={date,dateTime:null,timeZone:null};ev.end={date:ymd(addDays(pdate(date),1)),dateTime:null,timeZone:null}}
   return ev;
+}
+const noNull=o=>JSON.parse(JSON.stringify(o,(k,x)=>x===null?undefined:x));
+/* Mediciones: cada trabajo con fecha de medición tiene su evento en el mismo calendario. Manda la ficha;
+   si se mueve el evento en Google (o lo mueve Claude), la fecha nueva vuelve a la ficha. */
+const measOn=j=>!!(j.fieldDate&&!j.lostAt);
+const measSig=j=>measOn(j)?[j.fieldDate,j.fieldTime||'',j.client,j.type,j.partida||'',j.phone||'',obsOf(j),stIdx(j.stage)>1?1:0].join('|'):'';
+const measDirty=j=>measSig(j)!==(j.gMeasSig||'');
+function measEvent(j){
+  const ev={summary:(stIdx(j.stage)>1?'✓ ':'')+'Medir: '+j.client+(j.type?' — '+j.type:''),
+    description:[j.partida?'Partida: '+j.partida:'',j.phone?'Tel. '+j.phone:'',obsOf(j)?'Obs.: '+obsOf(j):'','Medición cargada desde Gestión Agrimensor.'].filter(Boolean).join('\n'),
+    extendedProperties:{private:{ga:'1',measJobId:String(j.id)}}};
+  return setWhen(ev,j.fieldDate,j.fieldTime,120);
 }
 function eventNote(ev,t){
   const p=(ev.extendedProperties&&ev.extendedProperties.private)||{},st=ev.start||{},sum=String(ev.summary||'');
@@ -1074,6 +1086,11 @@ function eventNote(ev,t){
      jobId:p.jobId||'',done,gId:ev.id,gUpd:ev.updated,dirty:false});
   if(done&&!was)t.completed=new Date().toISOString();
   return t;
+}
+function measFromEvent(ev,j){
+  if(!j||String(j.gMeasId)!==String(ev.id)){gs.del=[...(gs.del||[]),ev.id];gSave();gAgain=true;return}  /* trabajo borrado o evento repetido */
+  const st=ev.start||{},d=st.date||String(st.dateTime||'').slice(0,10),tm=st.dateTime?String(st.dateTime).slice(11,16):'';
+  if(d&&!measDirty(j)&&(d!==j.fieldDate||tm!==(j.fieldTime||''))){j.fieldDate=d;j.fieldTime=tm;j.gMeasSig=measSig(j)}
 }
 async function gSync(){
   if(gBusy){gAgain=true;return}
@@ -1087,11 +1104,18 @@ async function gSync(){
     const cal='/calendars/'+encodeURIComponent(gs.calId)+'/events';
     for(const id of [...(gs.del||[])]){try{await gApi('DELETE',cal+'/'+encodeURIComponent(id))}catch(e){if(e.code!=='gone')throw e}gs.del=(gs.del||[]).filter(x=>x!==id);gSave()}
     /* Primero se sube lo cambiado acá, después se baja lo de Google. */
-    for(const t of tasks.filter(t=>t.dirty&&t.date&&(t.gId||!t.done))){
+    for(const t of tasks.filter(t=>t.dirty&&t.date)){
       const sent=t.updatedAt;let r=null;
       if(t.gId){try{r=await gApi('PATCH',cal+'/'+encodeURIComponent(t.gId),noteEvent(t))}catch(e){if(e.code!=='gone')throw e}}
-      if(!r)r=await gApi('POST',cal,JSON.parse(JSON.stringify(noteEvent(t),(k,x)=>x===null?undefined:x)));
+      if(!r)r=await gApi('POST',cal,noNull(noteEvent(t)));
       t.gId=r.id;t.gUpd=r.updated;if(t.updatedAt===sent)t.dirty=false;writeLocal();
+    }
+    for(const j of jobs.filter(measDirty)){
+      const sig=measSig(j),ev=j.gMeasId;let r=null;
+      if(!sig){if(ev){try{await gApi('DELETE',cal+'/'+encodeURIComponent(ev))}catch(e){if(e.code!=='gone')throw e}}delete j.gMeasId;j.gMeasSig='';writeLocal();continue}
+      if(ev){try{r=await gApi('PATCH',cal+'/'+encodeURIComponent(ev),measEvent(j))}catch(e){if(e.code!=='gone')throw e}}
+      if(!r)r=await gApi('POST',cal,noNull(measEvent(j)));
+      j.gMeasId=r.id;j.gMeasSig=sig;writeLocal();
     }
     const from=ymd(addDays(new Date(),-120)),to=ymd(addDays(new Date(),400));
     let items=[],pt='';
@@ -1099,13 +1123,17 @@ async function gSync(){
     const byG=new Map(tasks.filter(t=>t.gId).map(t=>[t.gId,t])),seen=new Set();
     items.forEach(ev=>{
       if(ev.status==='cancelled')return;seen.add(ev.id);
+      const p=(ev.extendedProperties&&ev.extendedProperties.private)||{};
+      if(p.measJobId){measFromEvent(ev,getJob(p.measJobId));return}
       const t=byG.get(ev.id);
       if(t){if(!t.dirty&&ev.updated!==t.gUpd)eventNote(ev,t);return}
-      const p=(ev.extendedProperties&&ev.extendedProperties.private)||{};const mine=p.noteId&&getNote(p.noteId);
+      const mine=p.noteId&&getNote(p.noteId);
       if(mine){if(mine.dirty)mine.gId=ev.id;else eventNote(ev,mine)}else tasks.push(eventNote(ev));
     });
     /* Lo que se borró en Google se borra acá (si no se tocó en el celular mientras tanto). */
     tasks=tasks.filter(t=>!(t.gId&&!t.dirty&&!seen.has(t.gId)&&t.date>=from&&t.date<to));
+    /* Una medición borrada en Google se vuelve a crear: para quitarla, se quita la fecha en la ficha. */
+    jobs.forEach(j=>{if(j.gMeasId&&!seen.has(j.gMeasId)&&measOn(j)&&j.fieldDate>=from&&j.fieldDate<to){j.gMeasSig='';gAgain=true}});
     gs.last=new Date().toISOString();gSave();writeLocal();
   }catch(e){gErr=e&&e.code==='auth'?'':gMsg(e)}
   finally{gBusy=false;refresh();if(gAgain){gAgain=false;gSync()}}
@@ -1113,6 +1141,17 @@ async function gSync(){
 function gSoon(){clearTimeout(gTimer);gTimer=setTimeout(gSync,1500)}
 function noteSave(t){t.dirty=true;saveTask(t);gSoon()}
 function noteDel(t){if(t.gId){gs.del=[...(gs.del||[]),t.gId];gSave()}removeTask(t);gSoon()}
+/* Si el permiso venció, un toque en la Agenda lo renueva (Google pide un toque para abrir su ventanita, que se cierra sola). */
+function gTouch(){if(gs.linked&&gClientId()&&!gTokenOk()&&!gBusy&&navigator.onLine&&gisReady())gAuth()}
+/* Las tareas viejas de cada trabajo (job.tasks) pasan a la Agenda, ligadas al trabajo. */
+function moveJobTasks(){
+  let n=0;
+  jobs.forEach(j=>{if(!(j.tasks||[]).length)return;
+    j.tasks.forEach(t=>{const id='jt'+t.id;if(getNote(id))return;
+      tasks.push(normNote({id,text:t.text,date:String((t.done&&t.completed)||t.created||'').slice(0,10)||today(),jobId:String(j.id),done:!!t.done,completed:t.completed,created:t.created}));n++});
+    j.tasks=[]});
+  if(n)writeLocal();
+}
 function gStatusHtml(){
   const n=gPending(),pend=n?` · ${n} cambio${n>1?'s':''} sin subir`:'';
   if(!gClientId())return `<div class="gs">Google Calendar sin configurar.<button class="btn sm" data-act="config">Configurar</button></div>`;
@@ -1135,13 +1174,17 @@ function noteRow(t,showDay){
     <div class="main tap" data-act="editnote" data-t="${esc(t.id)}"><div class="t1 note-t">${esc(t.text)}</div>${sub.length?`<div class="t2">${sub.join('')}</div>`:''}</div>
     ${t.done?`<button class="small-act" data-act="delnote" data-t="${esc(t.id)}">Borrar</button>`:''}</div>`;
 }
+/* Renglón para anotar: "Agregar" lo deja pendiente; "Ya lo hice" lo guarda hecho con fecha de hoy. */
+function noteAddHtml(form,id,ph,jobId){
+  return `<form class="add-line" data-form="${form}"${jobId?` data-id="${esc(jobId)}"`:''}><input id="${id}" placeholder="${esc(ph)}" autocomplete="off" enterkeyhint="done"><button class="btn sm primary" type="submit">Agregar</button><button class="btn sm" type="submit" data-done="1">Ya lo hice</button></form>`;
+}
 function notesTodayHtml(){
   const td=today(),open=tasks.filter(t=>!t.done);
   const list=open.filter(t=>t.date<=td).sort(noteOrder),next=open.length-list.length;
-  const meas=jobs.filter(j=>toMeasure(j)&&!j.lostAt&&j.fieldDate===td),n=list.length+meas.length;
+  const meas=jobs.filter(j=>toMeasure(j)&&j.fieldDate===td).sort((a,b)=>String(a.fieldTime||'').localeCompare(String(b.fieldTime||''))),n=list.length+meas.length;
   return `<div class="block"><div class="label">Hoy <span class="count">${n?n+' pendiente'+(n>1?'s':''):''}</span></div><div class="rows">
-    <form class="add-line" data-form="notetoday"><input id="ntText" placeholder="Anotar algo para hoy…" autocomplete="off" enterkeyhint="done"><button class="btn sm primary" type="submit">Agregar</button></form>
-    ${meas.map(j=>`<div class="row tap strip2" data-act="open" data-id="${esc(j.id)}"><div class="main"><div class="t1">Medir: ${esc(j.client)}</div><div class="t2">${esc(j.type)}${j.partida?' · '+esc(j.partida):''}</div></div><span class="chip st2">Medición</span>${ICON_CHEV}</div>`).join('')}
+    ${noteAddHtml('notetoday','ntText','Anotar algo para hoy…')}
+    ${meas.map(j=>`<div class="row tap strip2" data-act="open" data-id="${esc(j.id)}"><div class="main"><div class="t1">Medir: ${esc(j.client)}</div><div class="t2">${j.fieldTime?`<span class="num">${esc(j.fieldTime)} hs</span>`:''}<span>${esc(j.type)}${j.partida?' · '+esc(j.partida):''}</span></div></div><span class="chip st2">Medición</span>${ICON_CHEV}</div>`).join('')}
     ${list.map(t=>noteRow(t,false)).join('')}
     <div class="add-line"><button class="link" data-act="tab" data-v="agenda">Ver toda la agenda${next?` · ${next} más adelante`:''}</button></div></div></div>`;
 }
@@ -1156,16 +1199,14 @@ function notesHtml(){
   const quick=[['Hoy',td],['Mañana',tm],['Lunes',mon]].filter((q,i,a)=>a.findIndex(x=>x[1]===q[1])===i);
   let h=`<section class="view">${gStatusHtml()}
     <form class="panel ag-add" data-form="note">
-      <div class="qform"><input id="agText" placeholder="Anotar: hablar con Mario, medir en…" autocomplete="off" enterkeyhint="done" aria-label="Qué hay que hacer"><button class="btn primary" type="submit">Agregar</button></div>
+      <div class="qform"><input id="agText" placeholder="Anotar: hablar con Mario, medir en…" autocomplete="off" enterkeyhint="done" aria-label="Qué hay que hacer"></div>
+      <div class="qform"><button class="btn primary" type="submit" style="flex:1">Agregar</button><button class="btn" type="submit" data-done="1" style="flex:1">Ya lo hice</button></div>
       <div class="tog">${quick.map(([l,v])=>`<button type="button" data-act="agdate" data-d="${v}" aria-pressed="${d===v}">${l}${l==='Hoy'?'':' <span class="num">'+fmtDay(v).split(' ')[1]+'</span>'}</button>`).join('')}${quick.some(q=>q[1]===d)?'':`<button type="button" aria-pressed="true">${fmtDay(d)}</button>`}</div>
       <div class="ag-opts"><input type="date" class="date-in" data-agdate value="${esc(d)}" aria-label="Elegir otra fecha"><input type="time" class="date-in" data-agtime value="${esc(ui.ag.time)}" aria-label="Hora (opcional)"><select data-agjob aria-label="Trabajo (opcional)">${jobOptions(ui.ag.job)}</select></div>
     </form>`;
   if(!open.length)h+=`<div class="rows"><div class="empty">No tenés nada pendiente en la agenda.</div></div>`;
   groups.forEach(([name,list])=>{if(!list.length)return;
     h+=`<div class="block"><div class="label"><span class="${name==='Atrasadas'?'late':''}">${name}</span> <span class="count">${list.length}</span></div><div class="rows">${list.map(t=>noteRow(t,!['Hoy','Mañana'].includes(name))).join('')}</div></div>`});
-  const jobTasks=[];jobs.forEach(j=>(j.tasks||[]).forEach(t=>{if(!t.done)jobTasks.push({j,t})}));
-  if(jobTasks.length)h+=`<div class="block"><div class="label">Tareas de trabajos <span class="count">${jobTasks.length}</span></div><div class="rows">
-    ${jobTasks.map(({j,t})=>`<div class="row"><input type="checkbox" class="check" data-act="jobtask" data-id="${esc(j.id)}" data-t="${esc(t.id)}" aria-label="Marcar hecha"><div class="main tap" data-act="open" data-id="${esc(j.id)}"><div class="t1 note-t">${esc(t.text)}</div><div class="t2"><span class="chip ${jCls(j)}">${esc(j.client)}</span></div></div></div>`).join('')}</div></div>`;
   const done=tasks.filter(t=>t.done).sort((a,b)=>String(b.completed||b.date).localeCompare(String(a.completed||a.date)));
   if(done.length)h+=`<div class="block"><button class="btn full" data-act="showdone">${ui.ag.showDone?'Ocultar hechas':'Ver hechas ('+done.length+')'}</button>${ui.ag.showDone?`<div class="rows">${done.slice(0,50).map(t=>noteRow(t,true)).join('')}</div>`:''}</div>`;
   return h+`</section>`;
@@ -1408,7 +1449,7 @@ async function exportExcel(){
   const list=repJobs();const n=list.length;
   const M=v=>({v:Number(v)||0,s:2}),D=s=>{const x=xlDate(s);return x==null?'':{v:x,s:3}},Hd=v=>({v,s:1});
   const head=['Cliente','Tipo de trabajo','Expediente','Partida','Teléfono','Etapa','Estado','Prioridad','Inicio','Medición prevista','Presupuesto','Cobrado','A cobrar','Gastos total','Gastos pendientes','Tareas pendientes','Observaciones'].map(Hd);
-  const rows=list.map(j=>[j.client,j.type,j.exp||'',j.partida||'',j.phone||'',j.stage,isActive(j)?'Activo':'Finalizado',['','Alta','Media','Baja'][j.priority]||'Media',D(j.start),toMeasure(j)?D(j.fieldDate):'',M(j.budget),M(j.paid),M(due(j)),M(expTot(j)),M(pendExp(j)),(j.tasks||[]).filter(t=>!t.done).map(t=>t.text).join(' · '),obsOf(j)]);
+  const rows=list.map(j=>[j.client,j.type,j.exp||'',j.partida||'',j.phone||'',j.stage,isActive(j)?'Activo':'Finalizado',['','Alta','Media','Baja'][j.priority]||'Media',D(j.start),toMeasure(j)?D(j.fieldDate):'',M(j.budget),M(j.paid),M(due(j)),M(expTot(j)),M(pendExp(j)),tasks.filter(t=>!t.done&&String(t.jobId)===String(j.id)).map(t=>t.text).join(' · '),obsOf(j)]);
   const tot=n?[[{v:'Totales',s:6},'','','','','','','','','',...['K','L','M','N','O'].map(c=>({f:`SUM(${c}4:${c}${n+3})`,s:5})),'','']]:[];
   const s1={name:'Trabajos',rows:[[{v:`Estado de trabajos al ${fmtDate(today())}`,s:4}],[],head,...rows,...tot],cols:[28,22,14,22,14,22,11,9,11,13,14,14,14,14,14,40,50],freeze:3,filter:n?`A3:Q${n+3}`:null};
   const pays=[];list.forEach(j=>(j.payments||[]).forEach(p=>pays.push([j.client,j.type,D(p.date),M(p.amount),p.method||'',p.receiptNumber||''])));
@@ -1510,7 +1551,7 @@ async function doImport(data){
   const ts=(data.tasks||[]).filter(t=>t&&t.id).map(normNote);
   settings=normSettings(data.settings);
   const map=new Map(jobs.map(j=>[String(j.id),j]));js.forEach(j=>map.set(String(j.id),j));jobs=[...map.values()];
-  const tm=new Map(tasks.map(t=>[String(t.id),t]));ts.forEach(t=>tm.set(String(t.id),t));tasks=[...tm.values()];
+  const tm=new Map(tasks.map(t=>[String(t.id),t]));ts.forEach(t=>tm.set(String(t.id),t));tasks=[...tm.values()];moveJobTasks();
   ensureReceiptNext();
   if(db){
     try{
@@ -1531,7 +1572,7 @@ document.addEventListener('click',e=>{
   const act=el.dataset.act,id=el.dataset.id,k=el.dataset.k!=null&&el.dataset.k!==''?+el.dataset.k:null;
   const j=id?getJob(id):null;
   switch(act){
-    case 'tab':ui.view=el.dataset.v;renderView();window.scrollTo(0,0);break;
+    case 'tab':ui.view=el.dataset.v;if(ui.view==='agenda')gTouch();renderView();window.scrollTo(0,0);break;
     case 'filter':ui.filter=el.dataset.f;ui.view='jobs';renderView();if(e.target.closest('.stages'))window.scrollTo(0,0);break;
     case 'open':openSheet({kind:'job',id});break;
     case 'new':openSheet({kind:'form'});break;
@@ -1547,7 +1588,8 @@ document.addEventListener('click',e=>{
     case 'unlost':if(j){delete j.lostAt;saveJob(j);renderSheet();toast('Presupuesto activo de nuevo')}break;
     case 'followed':if(j){j.followedAt=new Date().toISOString();saveJob(j);renderSheet();toast('Te lo recuerdo en 7 días')}break;
     case 'edit':openSheet({kind:'form',id});break;
-    case 'deljob':if(j&&armed(el,'Tocá de nuevo para eliminar')){closeSheet();const ev=j.calEventId;removeJob(j);toast('Trabajo eliminado');
+    case 'deljob':if(j&&armed(el,'Tocá de nuevo para eliminar')){closeSheet();const ev=j.calEventId;if(j.gMeasId){gs.del=[...(gs.del||[]),j.gMeasId];gSave();gSoon()}
+      tasks.filter(t=>String(t.jobId)===String(j.id)).forEach(t=>{t.jobId='';noteSave(t)});removeJob(j);toast('Trabajo eliminado');
       if(ev&&calOn())getMcp().then(m=>m&&m.callTool(CAL,'delete_event',{eventId:ev,notificationLevel:'NONE'}).catch(()=>{}))}break;
     case 'addpay':openSheet({kind:'payment',id,k:null});break;
     case 'editpay':openSheet({kind:'payment',id,k});break;
@@ -1557,9 +1599,8 @@ document.addEventListener('click',e=>{
     case 'addexp':openSheet({kind:'expense',id,k:null});break;
     case 'editexp':openSheet({kind:'expense',id,k});break;
     case 'delexp':if(j&&armed(el,'Tocá de nuevo para quitar')){j.expenses.splice(k,1);saveJob(j);openSheet({kind:'job',id})}break;
-    case 'jobtask':{if(!j)break;const t=(j.tasks||[]).find(x=>String(x.id)===el.dataset.t);if(t){t.done=el.checked;t.completed=el.checked?new Date().toISOString():undefined;saveJob(j);if(el.checked)toast('Tarea hecha')}break}
-    case 'deljobtask':if(j){j.tasks=j.tasks.filter(x=>String(x.id)!==el.dataset.t);saveJob(j)}break;
-    case 'note':{const t=getNote(el.dataset.t);if(t){t.done=el.checked;t.completed=el.checked?new Date().toISOString():undefined;noteSave(t);toast(el.checked?'Hecho':'Vuelve a pendiente')}break}
+    case 'jobdoneall':ui.jobDoneAll=!ui.jobDoneAll;renderSheet();break;
+    case 'note':{const t=getNote(el.dataset.t);if(t){gTouch();t.done=el.checked;t.completed=el.checked?new Date().toISOString():undefined;noteSave(t);toast(el.checked?'Hecho':'Vuelve a pendiente')}break}
     case 'notedone':{const t=getNote(el.dataset.t);if(t){t.done=!t.done;t.completed=t.done?new Date().toISOString():undefined;noteSave(t);closeSheet();toast(t.done?'Hecho':'Vuelve a pendiente')}break}
     case 'editnote':openSheet({kind:'note',id:el.dataset.t});break;
     case 'delnote':{const t=getNote(el.dataset.t);if(t&&armed(el,'¿Borrar?')){if(ui.sheet&&ui.sheet.kind==='note')closeSheet();noteDel(t);toast('Nota borrada')}break}
@@ -1571,7 +1612,7 @@ document.addEventListener('click',e=>{
     case 'gdisconnect':if(armed(el,'Tocá de nuevo para desconectar')){try{if(gs.token&&gisReady())google.accounts.oauth2.revoke(gs.token,()=>{})}catch(err){}gs.token='';gs.linked=false;gErr='';gSave();refresh();toast('Desconectado de Google')}break;
     case 'copymsg':{const txt=$('#stageMsg').textContent;const sel=()=>{const r=document.createRange();r.selectNodeContents($('#stageMsg'));const s=getSelection();s.removeAllRanges();s.addRange(r)};
       try{navigator.clipboard.writeText(txt).then(()=>toast('Mensaje copiado'),()=>{sel();toast('Texto seleccionado: copialo')})}catch(err){sel();toast('Texto seleccionado: copialo')}break}
-    case 'setfield':if(j){j.fieldDate=el.dataset.d;saveJob(j);toast(el.dataset.d?'Medición: '+fmtDay(el.dataset.d):'Fecha quitada');calSync(j.id)}break;
+    case 'setfield':if(j){gTouch();j.fieldDate=el.dataset.d;if(!j.fieldDate)j.fieldTime='';saveJob(j);toast(el.dataset.d?'Medición: '+fmtDay(el.dataset.d):'Fecha quitada')}break;
     case 'calsync':if(j)calSync(j.id);break;
     case 'calall':calSyncAll();break;
     case 'budgetpdf':if(j){if(!(Number(j.budget)>0)){toast('Primero cargá el presupuesto.');break}openSheet({kind:'budgetpdf',id})}break;
@@ -1603,7 +1644,8 @@ document.addEventListener('change',e=>{
   if(t.dataset.agdate!=null){ui.ag.date=t.value||null;renderView();return}
   if(t.dataset.agtime!=null){ui.ag.time=t.value;return}
   if(t.dataset.agjob!=null){ui.ag.job=t.value;return}
-  if(t.dataset.fieldDate!=null){const j=getJob(t.dataset.fieldDate);if(j){j.fieldDate=t.value;saveJob(j);if(t.value)toast('Medición: '+fmtDay(t.value));calSync(j.id)}return}
+  if(t.dataset.fieldDate!=null){const j=getJob(t.dataset.fieldDate);if(j){gTouch();j.fieldDate=t.value;if(!t.value)j.fieldTime='';saveJob(j);if(t.value)toast('Medición: '+fmtDay(t.value))}return}
+  if(t.dataset.fieldTime!=null){const j=getJob(t.dataset.fieldTime);if(j){gTouch();j.fieldTime=t.value;saveJob(j);toast(t.value?'Hora: '+t.value+' hs':'Sin hora')}return}
   if(t.dataset.obs!=null){const j=getJob(t.dataset.obs);if(j){const val=t.value.trim();if(val!==obsOf(j)||j.obs===undefined){j.obs=val;if(j.loc&&!looksPartida(j.loc))j.loc='';saveJob(j);toast('Observación guardada')}}return}
   if(t.dataset.expName!=null){const v=parseMoney(t.value);if(v>=0){settings.expenses[t.dataset.expName]=v;saveSettings();toast('Importe guardado')}}
   if(t.dataset.typeI!=null){const i=+t.dataset.typeI,old=settings.workTypes[i],name=t.value.trim();
@@ -1624,18 +1666,21 @@ document.addEventListener('submit',e=>{
   const err=m=>{const el=$('#formErr');if(el)el.textContent=m;else toast(m)};
   const j=f.dataset.id?getJob(f.dataset.id):null;
   switch(f.dataset.form){
-    case 'note':case 'notetoday':{
-      const box=f.dataset.form==='note'?'agText':'ntText',text=v(box);if(!text){toast('Escribí qué hay que hacer');$('#'+box)?.focus();return}
-      const full=f.dataset.form==='note',date=full?agDate():today();
-      const t={id:uid(),text,date,time:full?ui.ag.time:'',jobId:full?ui.ag.job:'',done:false,created:new Date().toISOString()};
+    case 'note':case 'notetoday':case 'jobnote':{
+      gTouch();
+      const form=f.dataset.form,box={note:'agText',notetoday:'ntText',jobnote:'jnText'}[form],text=v(box);if(!text){toast('Escribí qué hay que hacer');$('#'+box)?.focus();return}
+      const full=form==='note',doneNow=!!(e.submitter&&e.submitter.dataset.done);
+      /* "Ya lo hice" queda con fecha de hoy (o la elegida, si es anterior). */
+      let date=full?agDate():today();if(doneNow&&date>today())date=today();
+      const now=new Date().toISOString();
+      const t={id:uid(),text,date,time:full?ui.ag.time:'',jobId:full?ui.ag.job:form==='jobnote'?String(f.dataset.id):'',done:doneNow,created:now,completed:doneNow?now:undefined};
       $('#'+box).value='';if(full)ui.ag={...ui.ag,date:null,time:'',job:''};
-      tasks.push(t);noteSave(t);toast('Anotado para '+(date===today()?'hoy':fmtDay(date)));setTimeout(()=>$('#'+box)?.focus(),0);break}
+      tasks.push(t);noteSave(t);toast(doneNow?'Anotado como hecho':'Anotado para '+(date===today()?'hoy':fmtDay(date)));setTimeout(()=>$('#'+box)?.focus(),0);break}
     case 'noteedit':{
       const t=getNote(f.dataset.t);if(!t)return;const text=(document.getElementById('nText')?.value||'').trim(),date=v('nDate');
       if(!text){err('Escribí qué hay que hacer.');return}if(!date){err('Elegí una fecha.');return}
       Object.assign(t,{text,date,time:v('nTime'),jobId:v('nJob')});noteSave(t);closeSheet();toast('Nota guardada');break}
     case 'gcid':{settings.gClientId=v('gCid');gTokenClient=null;saveSettings();if(gClientId())gLoad().catch(()=>{});toast('Guardado');break}
-    case 'jobtask':{const text=v('newJobTask');if(!text||!j)return;j.tasks=j.tasks||[];j.tasks.unshift({id:uid(),text,done:false,created:new Date().toISOString()});saveJob(j);renderSheet();setTimeout(()=>$('#newJobTask')?.focus(),0);break}
     case 'quick':{if(!j)return;const inp=f.querySelector('input');const a=parseMoney(inp&&inp.value);if(!(a>0)){toast('Escribí el importe del presupuesto');inp&&inp.focus();return}if(inp)inp.value='';j.budget=a;j.quotedAt=new Date().toISOString();saveJob(j);toast(j.client+': '+money(a)+' · pasa a Presupuesto enviado');break}
     case 'quicknew':{const client=v('qnClient'),type=v('qnType')||workTypes()[0]||'',phone=v('qnPhone'),loc=v('qnLoc');if(!client){toast('Escribí el nombre del cliente');$('#qnClient')?.focus();return}['qnClient','qnPhone','qnLoc'].forEach(k=>{const el=document.getElementById(k);if(el)el.value=''});
       const nj=normJob({id:Date.now().toString(),client,type,budget:0,priority:2,start:today(),stage:'Presupuesto',stageAt:new Date().toISOString(),paid:0,payments:[],tasks:[],expenses:expensesForType(type),obs:loc?'Lugar: '+loc:'',loc:'',phone});jobs.push(nj);saveJob(nj);toast('Anotado para presupuestar');setTimeout(()=>$('#qnClient')?.focus(),0);break}
@@ -1676,7 +1721,7 @@ window.addEventListener('unhandledrejection',e=>{const r=e.reason;if(r&&r.code)r
 /* ===================== Inicio ===================== */
 (function init(){
   const l=readLocal();
-  if(l){jobs=(l.jobs||[]).map(normJob);tasks=(l.tasks||[]).map(normNote);settings=normSettings(l.settings)}
+  if(l){jobs=(l.jobs||[]).map(normJob);tasks=(l.tasks||[]).map(normNote);settings=normSettings(l.settings);moveJobTasks()}
   renderView();setSaveState();
   /* Agenda: se prepara Google para que el botón responda al primer toque y se sincroniza si el permiso sigue vigente. */
   if(gClientId()&&gs.linked){gLoad().catch(()=>{});gSync()}
