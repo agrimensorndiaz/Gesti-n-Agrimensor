@@ -363,6 +363,7 @@ function clientMsg(j){
     case 'Presupuesto':return Number(j.budget)>0?`Le paso el presupuesto del trabajo${tipo}: ${money(j.budget)}. Quedo a disposición por cualquier consulta.`:'';
     case 'Medición':return fd?`Le confirmo que la medición está prevista para el ${DOWL[fd.getDay()]} ${fd.getDate()}/${fd.getMonth()+1}.`:'El trabajo está en etapa de medición. En breve coordinamos el día para ir al lugar.';
     case 'Planos y notas':return 'Ya hicimos la medición. Ahora estamos preparando los planos y las notas del expediente.';
+    case 'Libro digital / Previa':return (j.rev||[]).length?'Ya presentamos las correcciones que pidió Catastro. Estamos esperando la respuesta.':STAGE_MSG[j.stage];
     case 'Aprobado':return STAGE_MSG['Aprobado']+saldo;
     case 'Entrega de documentación':return 'La documentación del trabajo ya está lista para entregarle.'+saldo;
     case 'Terminado':return d>0?`Le recuerdo que queda un saldo pendiente de ${money(d)} por el trabajo${tipo}.`:'';
@@ -594,7 +595,7 @@ function todoItems(){
 function todoHtml(){
   const items=todoItems();if(!items.length)return '';
   const K={fix:['Corregir','st5'],deliver:['Entregar','st7'],collect:['Cobrar','st6'],follow:['Llamar','st1'],stale:['Consultar','st4']};
-  return `<div class="block"><div class="label">Para hacer <span class="count">${items.length}</span></div><div class="rows">${items.map(({j,text,kind})=>`<div class="row tap ${K[kind][1].replace('st','strip')}" data-act="open" data-id="${esc(j.id)}"><div class="main"><div class="t1">${esc(j.client)}</div><div class="t2">${esc(text)}</div></div><span class="chip ${K[kind][1]}">${K[kind][0]}</span>${ICON_CHEV}</div>`).join('')}</div></div>`;
+  return `<div class="block"><div class="label">Para hacer <span class="count">${items.length}</span></div><div class="rows">${items.map(({j,text,kind})=>`<div class="row tap ${K[kind][1].replace('st','strip')}" data-act="open" data-id="${esc(j.id)}"><div class="main"><div class="t1">${esc(j.client)}</div><div class="t2">${esc(text)}</div></div>${kind==='collect'?`<button class="small-act" data-act="paynow" data-id="${esc(j.id)}">Me pagó</button>`:`<span class="chip ${K[kind][1]}">${K[kind][0]}</span>`}${ICON_CHEV}</div>`).join('')}</div></div>`;
 }
 /* Trabajos que todavía hay que presupuestar: se carga el importe ahí mismo. */
 function quoteHtml(){
@@ -748,6 +749,21 @@ function renderSheet(){
 const closeBtn=`<button class="icon-btn" data-act="close" aria-label="Cerrar"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`;
 
 /* ----- Ficha ----- */
+/* Botones y vueltas con Catastro mientras el expediente está en previa o en correcciones. */
+function revHtml(j){
+  const r=j.rev||[],days=daysSince(j.stageAt),id=esc(j.id);
+  let h='';
+  if(j.stage==='Libro digital / Previa'){
+    h+=`<div class="note info">${r.length?`Correcciones presentadas (${r.length}ª vez). `:''}Esperando respuesta de Catastro${days===0?' desde hoy':days!==null?` hace ${days} día${days===1?'':'s'}`:''}.</div>
+      <div class="btn-row"><button class="btn primary" data-act="approve" data-id="${id}">Aprobado ✓</button><button class="btn" data-act="revback" data-id="${id}">Volvió con correcciones</button></div>`;
+  } else {
+    h+=`<div class="note warn">Catastro lo devolvió${r.length>1?` (${r.length}ª vez)`:''}. Hacé las correcciones y presentalas.</div>
+      <button class="btn primary full" data-act="revsent" data-id="${id}">Correcciones presentadas → vuelve a esperar</button>
+      <button class="btn full" data-act="approve" data-id="${id}">Ya está aprobado</button>`;
+  }
+  if(r.length)h+=`<div class="block"><div class="label">Idas y vueltas con Catastro <span class="count">${r.length}</span></div><div class="rows">${r.map((x,k)=>`<div class="row"><div class="main"><div class="t1">${k+1}ª devolución · ${fmtDate(x.back)}</div><div class="t2">${x.sent?'Presentada de nuevo el '+fmtDate(x.sent):'Corrigiendo'}</div></div></div>`).join('')}</div></div>`;
+  return h;
+}
 function jobSheet(j){
   const i=stIdx(j.stage),d=due(j),days=daysSince(j.stageAt);
   const sub=[esc(j.type)];if(j.exp)sub.push('Exp. '+esc(j.exp));sub.push(j.partida?'Partida <span class="num" style="user-select:all">'+esc(j.partida)+'</span>':'Sin partida cargada');
@@ -769,6 +785,8 @@ function jobSheet(j){
     h+=`<div class="note info"><b>No aceptó el presupuesto</b> (${fmtDate(j.lostAt)}). No cuenta en Plata ni en los activos.</div><button class="btn full" data-act="unlost" data-id="${esc(j.id)}">Volver a activar el presupuesto</button>`;
   } else if(j.stage==='Presupuesto'&&!(Number(j.budget)>0)){
     h+=`<form class="panel form" style="padding:12px" data-form="budget" data-id="${esc(j.id)}"><div class="field"><label for="budgetIn">Importe del presupuesto</label><input id="budgetIn" class="money-in num" inputmode="decimal" placeholder="$ 0"></div><button class="btn primary full" type="submit">Guardar presupuesto</button></form>`;
+  } else if(j.stage==='Libro digital / Previa'||j.stage==='Correcciones'){
+    h+=revHtml(j);
   } else if(j.stage!=='Terminado'){
     if(j.stage==='Presupuesto')h+=`<button class="btn full" data-act="budgetpdf" data-id="${esc(j.id)}">Presupuesto en PDF para el cliente</button>`;
     h+=`<button class="btn primary full" data-act="advance" data-id="${esc(j.id)}">${esc(NEXT_LABEL[j.stage])}</button>`;
@@ -779,6 +797,8 @@ function jobSheet(j){
     h+=d>0?`<div class="note warn"><b>Terminado, falta cobrar ${money(d)}.</b> Cuando registres el cobro total queda finalizado.</div>`:`<div class="note ok"><b>Trabajo finalizado y cobrado.</b></div>`;
   }
   if(d>0&&(j.stage==='Aprobado'||j.stage==='Entrega de documentación'))h+=`<div class="note warn">Falta cobrar <b>${money(d)}</b>.</div>`;
+  /* Cobro rápido: abre el cobro con el saldo ya cargado (se puede cambiar si pagó una parte). */
+  if(owed(j)>0&&stIdx(j.stage)>=5)h+=`<button class="btn primary full" data-act="paynow" data-id="${esc(j.id)}">Me pagó · registrar cobro</button>`;
 
   h+=`<div class="block"><div class="label"><label for="obsIn">Observaciones especiales</label></div><textarea id="obsIn" class="obs-in" data-obs="${esc(j.id)}" placeholder="Algo específico de este trabajo…">${esc(obsOf(j))}</textarea></div>`;
 
@@ -847,7 +867,7 @@ function paymentSheet(s){
   const j=getJob(s.id);const p=s.k!=null?j.payments[s.k]:null;
   return `<div class="sheet-head"><div class="main"><h2>${p?'Editar cobro':'Registrar cobro'}</h2><div class="sub">${esc(j.client)} · falta cobrar ${money(due(j))}</div></div>${closeBtn}</div>
   <form class="form" data-form="pay" data-id="${esc(j.id)}" data-k="${p?s.k:''}">
-    <div class="field"><label for="pAmt">Importe</label><input id="pAmt" class="money-in num" inputmode="decimal" placeholder="$ 0" value="${p?esc(money(p.amount)):''}">${!p&&due(j)>0?`<button class="link" type="button" data-act="fillsaldo" data-v="${due(j)}" style="align-self:flex-start">Cobrar el saldo completo: ${money(due(j))}</button>`:''}</div>
+    <div class="field"><label for="pAmt">Importe</label><input id="pAmt" class="money-in num" inputmode="decimal" placeholder="$ 0" value="${p?esc(money(p.amount)):s.fill&&due(j)>0?esc(money(due(j))):''}">${!p&&due(j)>0?`<button class="link" type="button" data-act="fillsaldo" data-v="${due(j)}" style="align-self:flex-start">Cobrar el saldo completo: ${money(due(j))}</button>`:''}</div>
     <div class="two"><div class="field"><label for="pDate">Fecha</label><input id="pDate" type="date" value="${esc(p?p.date||'':today())}"></div>
     <div class="field"><label for="pMethod">Medio de pago</label><input id="pMethod" list="methods" value="${esc(p?p.method||'':'')}" placeholder="Transferencia" autocomplete="off"><datalist id="methods"><option>Transferencia</option><option>Efectivo</option><option>Cheque</option></datalist></div></div>
     <div class="err" id="formErr"></div>
@@ -935,6 +955,15 @@ function advance(j){
   if(i<STAGES.length-1){j.stage=STAGES[i+1];j.stageAt=new Date().toISOString();saveJob(j);toast('Pasó a '+j.stage)}
 }
 function back(j){const i=stIdx(j.stage);if(i>0){j.stage=STAGES[i-1];j.stageAt=new Date().toISOString();saveJob(j);toast('Volvió a '+j.stage)}}
+/* Previa ↔ Correcciones: Catastro devuelve, se corrige y se vuelve a presentar, tantas veces como haga falta.
+   Cada vuelta queda en j.rev = [{back:fecha en que volvió, sent:fecha en que se presentó de nuevo}]. */
+const revOpen=j=>{const r=(j.rev||[]);return r.length&&!r[r.length-1].sent?r[r.length-1]:null};
+function setStage(j,s,msg){j.stage=s;j.stageAt=new Date().toISOString();saveJob(j);toast(msg||'Pasó a '+s)}
+function revBack(j){j.rev=[...(j.rev||[]),{back:today()}];setStage(j,'Correcciones',`Volvió con correcciones (${j.rev.length}ª vez)`)}
+function revSent(j){
+  const o=revOpen(j);if(o)o.sent=today();else j.rev=[...(j.rev||[]),{back:String(j.stageAt||'').slice(0,10)||today(),sent:today()}];
+  setStage(j,'Libro digital / Previa','Correcciones presentadas · esperando a Catastro');
+}
 
 /* ===================== Google Calendar ===================== */
 const CAL='Google Calendar';
@@ -1174,6 +1203,8 @@ function noteRow(t,showDay){
     <div class="main tap" data-act="editnote" data-t="${esc(t.id)}"><div class="t1 note-t">${esc(t.text)}</div>${sub.length?`<div class="t2">${sub.join('')}</div>`:''}</div>
     ${t.done?`<button class="small-act" data-act="delnote" data-t="${esc(t.id)}">Borrar</button>`:''}</div>`;
 }
+/* Lo que se marcó hecho hoy sigue a la vista (tachado) hasta mañana. */
+const doneToday=()=>tasks.filter(t=>t.done&&t.completed&&ymd(new Date(t.completed))===today()).sort((a,b)=>String(b.completed).localeCompare(String(a.completed)));
 /* Renglón para anotar: "Agregar" lo deja pendiente; "Ya lo hice" lo guarda hecho con fecha de hoy. */
 function noteAddHtml(form,id,ph,jobId){
   return `<form class="add-line" data-form="${form}"${jobId?` data-id="${esc(jobId)}"`:''}><input id="${id}" placeholder="${esc(ph)}" autocomplete="off" enterkeyhint="done"><button class="btn sm primary" type="submit">Agregar</button><button class="btn sm" type="submit" data-done="1">Ya lo hice</button></form>`;
@@ -1186,6 +1217,7 @@ function notesTodayHtml(){
     ${noteAddHtml('notetoday','ntText','Anotar algo para hoy…')}
     ${meas.map(j=>`<div class="row tap strip2" data-act="open" data-id="${esc(j.id)}"><div class="main"><div class="t1">Medir: ${esc(j.client)}</div><div class="t2">${j.fieldTime?`<span class="num">${esc(j.fieldTime)} hs</span>`:''}<span>${esc(j.type)}${j.partida?' · '+esc(j.partida):''}</span></div></div><span class="chip st2">Medición</span>${ICON_CHEV}</div>`).join('')}
     ${list.map(t=>noteRow(t,false)).join('')}
+    ${doneToday().map(t=>noteRow(t,false)).join('')}
     <div class="add-line"><button class="link" data-act="tab" data-v="agenda">Ver toda la agenda${next?` · ${next} más adelante`:''}</button></div></div></div>`;
 }
 function jobOptions(sel){
@@ -1207,6 +1239,8 @@ function notesHtml(){
   if(!open.length)h+=`<div class="rows"><div class="empty">No tenés nada pendiente en la agenda.</div></div>`;
   groups.forEach(([name,list])=>{if(!list.length)return;
     h+=`<div class="block"><div class="label"><span class="${name==='Atrasadas'?'late':''}">${name}</span> <span class="count">${list.length}</span></div><div class="rows">${list.map(t=>noteRow(t,!['Hoy','Mañana'].includes(name))).join('')}</div></div>`});
+  const dt=doneToday();
+  if(dt.length)h+=`<div class="block"><div class="label">Hecho hoy <span class="count">${dt.length}</span></div><div class="rows">${dt.map(t=>noteRow(t,false)).join('')}</div></div>`;
   const done=tasks.filter(t=>t.done).sort((a,b)=>String(b.completed||b.date).localeCompare(String(a.completed||a.date)));
   if(done.length)h+=`<div class="block"><button class="btn full" data-act="showdone">${ui.ag.showDone?'Ocultar hechas':'Ver hechas ('+done.length+')'}</button>${ui.ag.showDone?`<div class="rows">${done.slice(0,50).map(t=>noteRow(t,true)).join('')}</div>`:''}</div>`;
   return h+`</section>`;
@@ -1580,6 +1614,10 @@ document.addEventListener('click',e=>{
     case 'close':closeSheet();break;
     case 'bg':if(e.target===el)closeSheet();break;
     case 'advance':if(j)advance(j);break;
+    case 'revback':if(j)revBack(j);break;
+    case 'revsent':if(j)revSent(j);break;
+    case 'approve':if(j){const o=revOpen(j);if(o)o.sent=today();setStage(j,'Aprobado','¡Aprobado!')}break;
+    case 'paynow':openSheet({kind:'payment',id,k:null,fill:true});break;
     case 'back':if(j&&armed(el,'Tocá de nuevo para volver'))back(j);break;
     case 'more':ui.moreOpen=!ui.moreOpen;renderSheet();break;
     case 'quoteall':ui.quoteAll=!ui.quoteAll;renderView();break;
