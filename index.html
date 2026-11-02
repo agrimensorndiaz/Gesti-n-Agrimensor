@@ -4,7 +4,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap">
 <style>
-/* Layout: barra superior compacta + contenido en una columna + navegación inferior de 3 pestañas; la ficha y la configuración se abren en una hoja encima. */
+/* Layout: barra superior compacta + contenido en una columna + navegación inferior de 4 pestañas; la ficha y la configuración se abren en una hoja encima. */
 :root{
   --bg:#f2f4f3; --surface:#ffffff; --sunken:#e9edec; --ink:#16212a; --muted:#5b6971; --line:#d9e0de;
   --accent:#c2410c; --accent-ink:#ffffff; --accent-soft:#fdeadc;
@@ -54,7 +54,7 @@ main{max-width:760px;margin:0 auto;padding:14px 16px calc(92px + env(safe-area-i
 
 /* navegación inferior */
 .tabs{position:fixed;left:0;right:0;bottom:0;z-index:6;background:var(--surface);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom,0px)}
-.tabs-in{max-width:760px;margin:0 auto;display:grid;grid-template-columns:repeat(3,1fr)}
+.tabs-in{max-width:760px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr)}
 .tab{border:0;background:none;padding:9px 4px 10px;display:flex;flex-direction:column;align-items:center;gap:2px;color:var(--muted);font-size:13px;font-weight:600}
 .tab svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8}
 .tab[aria-current="page"]{color:var(--accent)}
@@ -267,6 +267,18 @@ a.btn.wa{border-color:var(--ok);color:var(--ok)}
   @keyframes glow{0%,100%{box-shadow:0 0 0 0 rgba(237,140,40,0)}50%{box-shadow:0 0 16px 3px rgba(237,140,40,.6)}}
   @keyframes glowLate{0%,100%{box-shadow:0 0 0 0 rgba(220,60,50,0)}50%{box-shadow:0 0 16px 3px rgba(220,60,50,.6)}}}
 
+/* agenda */
+.ag-add{padding:12px;display:flex;flex-direction:column;gap:10px}
+.ag-add .qform input{background:var(--surface)}
+.ag-opts{display:flex;gap:8px;flex-wrap:wrap}
+.ag-opts .date-in{flex:1;min-width:120px;max-width:none}
+.ag-opts select{flex:2;min-width:150px;border:1px solid var(--line);border-radius:8px;padding:7px 8px;background:var(--surface)}
+.row .t1.note-t{white-space:normal;overflow:visible}
+.row .main.tap{cursor:pointer}
+.gs{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:13px;color:var(--muted)}
+.gs.ok b{color:var(--ok)}.gs.err{color:var(--warn)}
+.gs .btn{flex:none}
+
 /* aviso flotante */
 .toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:40;background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:999px;font-size:14px;font-weight:600;max-width:calc(100% - 32px);text-align:center;box-shadow:0 6px 20px rgba(0,0,0,.2)}
 @media (prefers-reduced-motion:no-preference){.sheet{animation:up .18s ease-out}@keyframes up{from{transform:translateY(24px);opacity:.6}to{transform:none;opacity:1}}}
@@ -324,6 +336,7 @@ a.btn.wa{border-color:var(--ok);color:var(--ok)}
 <nav class="tabs"><div class="tabs-in">
   <button class="tab" data-act="tab" data-v="home"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>Inicio</button>
   <button class="tab" data-act="tab" data-v="jobs"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Trabajos</button>
+  <button class="tab" data-act="tab" data-v="agenda"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4M8 14h3"/></svg>Agenda</button>
   <button class="tab" data-act="tab" data-v="money"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/></svg>Plata</button>
 </div></nav>
 
@@ -379,7 +392,7 @@ function defaultSettings(){return {expenses:{...DEFAULT_EXPENSES},mapping:JSON.p
 
 let jobs=[],tasks=[],settings=defaultSettings();
 let db=null,cloudReady=false,localPending=null;
-const ui={view:'home',filter:'active',q:'',sheet:null,moreOpen:false,form:{}};
+const ui={view:'home',filter:'active',q:'',sheet:null,moreOpen:false,form:{},ag:{date:null,time:'',job:'',showDone:false}};
 
 /* ===================== Utilidades ===================== */
 const $=s=>document.querySelector(s);
@@ -524,7 +537,7 @@ function refresh(fromRemote){
   if(ui.sheet){
     const s=$('#sheetRoot .sheet');
     const typing=fromRemote&&s&&s.contains(document.activeElement)&&/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
-    if(!typing&&!(ui.sheet.kind==='form'||ui.sheet.kind==='payment'||ui.sheet.kind==='expense'||ui.sheet.kind==='budgetpdf'))renderSheet();
+    if(!typing&&!(ui.sheet.kind==='form'||ui.sheet.kind==='payment'||ui.sheet.kind==='expense'||ui.sheet.kind==='budgetpdf'||ui.sheet.kind==='note'))renderSheet();
   }
 }
 function renderView(){
@@ -533,7 +546,7 @@ function renderView(){
   /* Conservar lo que se está escribiendo si la pantalla se redibuja. */
   const vals={};app.querySelectorAll('input[id]').forEach(i=>{if(i.type!=='checkbox')vals[i.id]=i.value});
   const ae=document.activeElement,fid=ae&&app.contains(ae)?ae.id:null;let sel=null;try{if(fid)sel=[ae.selectionStart,ae.selectionEnd]}catch(e){}
-  app.innerHTML=ui.view==='home'?homeHtml():ui.view==='jobs'?jobsHtml():moneyHtml();
+  app.innerHTML=ui.view==='home'?homeHtml():ui.view==='jobs'?jobsHtml():ui.view==='agenda'?notesHtml():moneyHtml();
   Object.entries(vals).forEach(([id,v])=>{const i=document.getElementById(id);if(i&&id!=='q')i.value=v});
   if(fid){const i=document.getElementById(fid);if(i){i.focus();try{if(sel&&sel[0]!=null)i.setSelectionRange(sel[0],sel[1])}catch(e){}}}
 }
@@ -592,8 +605,6 @@ function backupHtml(){
 }
 function homeHtml(){
   const active=jobs.filter(isActive);
-  const jobTasks=[];jobs.forEach(j=>(j.tasks||[]).forEach(t=>{if(!t.done)jobTasks.push({j,t})}));
-  const gen=tasks.filter(t=>!t.done).sort((a,b)=>String(b.created||'').localeCompare(String(a.created||'')));
   const counts=PHASES.slice(0,8).map(s=>[s,jobs.filter(j=>phaseOf(j)===s).length]);
   const unpaidDone=jobs.filter(j=>j.stage==='Terminado'&&due(j)>0).length;
 
@@ -601,18 +612,12 @@ function homeHtml(){
   <button class="active-total" data-act="filter" data-f="active"><span>Trabajos activos</span><b class="num">${active.length}</b>${ICON_CHEV}</button>`;
 
   h+=quoteHtml();
+  h+=notesTodayHtml();
   h+=todoHtml();
   h+=agendaHtml();
   h+=`<div class="block"><div class="label">Por etapa</div><div class="stages">
     ${counts.map(([s,n])=>`<button class="stage-btn ${n?'':'zero'}" data-act="filter" data-f="${esc(s)}"><span class="dot ${phCls(s)}"></span><span class="nm">${esc(s)}</span><span class="n num">${n}</span></button>`).join('')}
     <button class="stage-btn ${unpaidDone?'':'zero'}" data-act="filter" data-f="unpaid"><span class="dot st8"></span><span class="nm">Terminado sin cobrar</span><span class="n num">${unpaidDone}</span></button>
-  </div></div>`;
-
-  h+=`<div class="block"><div class="label">Tareas pendientes <span class="count">${jobTasks.length+gen.length}</span></div><div class="rows">
-    <form class="add-line" data-form="task"><input id="newTask" placeholder="Anotar algo para hacer…" autocomplete="off"><button class="btn sm primary" type="submit">Agregar</button></form>
-    ${jobTasks.map(({j,t})=>`<div class="row"><input type="checkbox" class="check" data-act="jobtask" data-id="${esc(j.id)}" data-t="${esc(t.id)}" aria-label="Marcar hecha"><div class="main" data-act="open" data-id="${esc(j.id)}" style="cursor:pointer"><div class="t1">${esc(t.text)}</div><div class="t2">${esc(j.client)}</div></div></div>`).join('')}
-    ${gen.map(t=>`<div class="row"><input type="checkbox" class="check" data-act="task" data-t="${esc(t.id)}" aria-label="Marcar hecha"><div class="main"><div class="t1">${esc(t.text)}</div></div></div>`).join('')}
-    ${!jobTasks.length&&!gen.length?'<div class="empty">No hay tareas pendientes.</div>':''}
   </div></div>`;
   if(!jobs.length)h+=`<div class="note info">Todavía no hay trabajos. Tocá <b>+ Nuevo</b> para cargar el primero, o pasá tus datos de la app anterior desde <b>Configuración → Importar copia</b>.</div>`;
   return h+`</section>`;
@@ -718,6 +723,7 @@ function renderSheet(){
   else if(s.kind==='expense')html=expenseSheet(s);
   else if(s.kind==='config')html=configSheet();
   else if(s.kind==='budgetpdf')html=budgetPdfSheet(s);
+  else if(s.kind==='note'){if(!getNote(s.id)){closeSheet();return}html=noteSheet(s)}
   $('#sheetRoot').innerHTML=`<div class="sheet-bg" data-act="bg"><div class="sheet" role="dialog" aria-modal="true">${html}</div></div>`;
   const sh=$('#sheetRoot .sheet');if(sh)sh.scrollTop=y;
   document.querySelectorAll('#sheetRoot .money-in').forEach(el=>{el.addEventListener('input',()=>fmtMoneyInput(el))});
@@ -774,6 +780,10 @@ function jobSheet(j){
     ${tp.map(t=>`<div class="row"><input type="checkbox" class="check" data-act="jobtask" data-id="${esc(j.id)}" data-t="${esc(t.id)}" aria-label="Marcar hecha"><div class="main"><div class="t1">${esc(t.text)}</div></div></div>`).join('')}
     ${td.map(t=>`<div class="row done"><input type="checkbox" class="check" checked data-act="jobtask" data-id="${esc(j.id)}" data-t="${esc(t.id)}" aria-label="Desmarcar"><div class="main"><div class="t1">${esc(t.text)}</div></div><button class="small-act" data-act="deljobtask" data-id="${esc(j.id)}" data-t="${esc(t.id)}">Borrar</button></div>`).join('')}
   </div></div>`;
+  const jn=tasks.filter(t=>!t.done&&String(t.jobId)===String(j.id)).sort(noteOrder);
+  h+=`<div class="block"><div class="label">En la agenda <span class="count">${jn.length?jn.length+' pendiente'+(jn.length>1?'s':''):''}</span></div><div class="rows">
+    ${jn.map(t=>noteRow(t,true)).join('')}
+    <div class="add-line"><button class="link" data-act="agfor" data-id="${esc(j.id)}">+ Anotar en la agenda para este trabajo</button></div></div></div>`;
 
   const msg=clientMsg(j),wl=waLink(j,msg);
   if(msg)h+=`<div class="block"><div class="label">Mensaje para el cliente</div><div class="msg" id="stageMsg">${esc(msg)}</div><div class="btn-row"><button class="btn" data-act="copymsg">Copiar mensaje</button>${wl?`<a class="btn wa" href="${esc(wl)}" target="_blank" rel="noopener">Enviar por WhatsApp</a>`:''}</div></div>`;
@@ -877,7 +887,13 @@ function configSheet(){
     <form class="add-line" data-form="type"><input id="newType" placeholder="Nuevo tipo de trabajo" autocomplete="off"><button class="btn sm primary" type="submit">Agregar</button></form>
   </div></div>`;
 
-  h+=`<div class="block"><div class="label">Google Calendar</div><div class="panel" style="padding:12px;display:flex;flex-direction:column;gap:10px">
+  h+=`<div class="block"><div class="label">Agenda en Google Calendar</div><div class="panel" style="padding:12px;display:flex;flex-direction:column;gap:10px">
+    <div class="t2">Las notas de la Agenda también se guardan en un calendario aparte de tu Google llamado "${AG_CAL}". Lo que agregues ahí desde Google Calendar, o lo que te anote Claude, aparece en la app.</div>
+    ${gStatusHtml()}
+    ${GOOGLE_CLIENT_ID?'':`<form class="field" data-form="gcid"><label for="gCid">ID de cliente de Google</label><div class="qform"><input id="gCid" value="${esc(settings.gClientId||'')}" placeholder="….apps.googleusercontent.com" autocomplete="off"><button class="btn" type="submit">Guardar</button></div></form>`}
+    ${gs.linked?`<button class="btn danger" data-act="gdisconnect">Desconectar de Google</button>`:''}
+  </div></div>`;
+  if(mcp)h+=`<div class="block"><div class="label">Google Calendar</div><div class="panel" style="padding:12px;display:flex;flex-direction:column;gap:10px">
     ${mcp?`<div class="cal-line"><div><b>Agendar mediciones</b><div class="t2">Al poner una fecha de medición se crea un evento de todo el día en tu calendario. Si cambiás la fecha se mueve y si la quitás se borra.</div></div>
       <button class="switch" data-act="caltoggle" role="switch" aria-checked="${calOn()}" aria-label="Agendar mediciones en Google Calendar"><i></i></button></div>
       ${calOn()?`<button class="btn" data-act="calall">Agendar ahora las mediciones con fecha</button>`:''}`
@@ -959,6 +975,191 @@ function calStatusHtml(j){
   if(j.fieldDate&&calSynced(j))return `<div class="cal-st ok">En tu Google Calendar</div>`;
   if(j.fieldDate)return `<div class="cal-st">No está en tu calendario. <button class="link" data-act="calsync" data-id="${esc(j.id)}">Agendar</button></div>`;
   return '';
+}
+
+/* ===================== Agenda ===================== */
+/* Notas sueltas ("Hablar con Mario"), cada una con fecha y, si se quiere, hora y trabajo.
+   Se guardan en el celular y además en un calendario aparte de Google ("Agenda Agrimensor"):
+   lo que se cargue allá (o lo que anote Claude) también aparece acá. */
+const AG_CAL='Agenda Agrimensor',TZ='America/Argentina/Buenos_Aires',GKEY='gestion_agrimensor_gcal';
+const GOOGLE_CLIENT_ID='';
+const G_SCOPE='https://www.googleapis.com/auth/calendar.app.created https://www.googleapis.com/auth/calendar.calendarlist.readonly';
+const DONE_RX=/^\s*[✓✔☑]\s*/;
+const getNote=id=>tasks.find(t=>String(t.id)===String(id));
+const agDate=()=>ui.ag.date||today();
+const hm=d=>String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+const noteOrder=(a,b)=>String(a.date).localeCompare(String(b.date))||String(a.time||'').localeCompare(String(b.time||''))||String(a.created||'').localeCompare(String(b.created||''));
+/* Las tareas generales viejas (sin fecha) pasan a la agenda con la fecha en que se anotaron. */
+function normNote(t){
+  const date=/^\d{4}-\d{2}-\d{2}$/.test(t.date||'')?t.date:(String(t.created||'').slice(0,10)||today());
+  return {...t,id:String(t.id||uid()),text:String(t.text||''),date,time:t.time||'',jobId:t.jobId?String(t.jobId):'',done:!!t.done,dirty:t.dirty!==undefined?!!t.dirty:!t.gId};
+}
+
+/* ----- Guardado con Google Calendar ----- */
+let gs=(()=>{try{return JSON.parse(localStorage.getItem(GKEY)||'null')||{}}catch(e){return {}}})();
+function gSave(){try{localStorage.setItem(GKEY,JSON.stringify(gs))}catch(e){}}
+const gClientId=()=>String(GOOGLE_CLIENT_ID||settings.gClientId||'').trim();
+const gTokenOk=()=>!!(gs.token&&gs.exp>Date.now()+60000);
+const gPending=()=>tasks.filter(t=>t.dirty&&t.date&&(t.gId||!t.done)).length+(gs.del||[]).length;
+let gBusy=false,gAgain=false,gErr='',gTimer=null,gTokenClient=null,gLoading=null;
+const gisReady=()=>!!(window.google&&google.accounts&&google.accounts.oauth2);
+function gLoad(){
+  if(gisReady())return Promise.resolve();if(gLoading)return gLoading;
+  gLoading=new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://accounts.google.com/gsi/client';s.async=true;s.onload=()=>res();s.onerror=()=>{gLoading=null;s.remove();rej(new Error('gsi'))};document.head.appendChild(s)});
+  return gLoading;
+}
+/* Se llama solo desde un toque: Google abre una ventanita para dar permiso (la primera vez) o la cierra sola. */
+function gAuth(){
+  const cid=gClientId();if(!cid){toast('Falta el ID de cliente de Google: cargalo en Configuración.');openSheet({kind:'config'});return}
+  if(!navigator.onLine){toast('Sin señal: las notas se suben cuando vuelva la conexión');return}
+  if(!gisReady()){gLoad().then(()=>toast('Listo, tocá de nuevo para conectar'),()=>toast('No se pudo abrir Google. Revisá la conexión.'));return}
+  if(!gTokenClient||gTokenClient._cid!==cid){
+    gTokenClient=google.accounts.oauth2.initTokenClient({client_id:cid,scope:G_SCOPE,
+      callback:r=>{if(r&&r.access_token&&google.accounts.oauth2.hasGrantedAllScopes(r,...G_SCOPE.split(' '))){gs.token=r.access_token;gs.exp=Date.now()+(Number(r.expires_in)||3600)*1000;const first=!gs.linked;gs.linked=true;gErr='';gSave();if(first)toast('Conectado con Google Calendar');gSync()}
+        else{gErr=r&&r.access_token?'Hay que tildar todos los permisos que pide Google.':'Google no dio permiso.';refresh()}},
+      error_callback:e=>{if(e&&e.type==='popup_closed')return;gErr=e&&e.type==='popup_failed_to_open'?'El celular bloqueó la ventana de Google. Probá de nuevo.':'No se pudo conectar con Google.';refresh()}});
+    gTokenClient._cid=cid;
+  }
+  gTokenClient.requestAccessToken({prompt:gs.linked?'':'consent'});
+}
+async function gApi(method,path,body){
+  const r=await fetch('https://www.googleapis.com/calendar/v3'+path,{method,cache:'no-store',headers:{Authorization:'Bearer '+gs.token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
+  if(r.status===401){gs.token='';gSave();throw {code:'auth'}}
+  if(r.status===404||r.status===410)throw {code:'gone'};
+  if(!r.ok){let m='';try{m=(await r.json()).error.message}catch(e){}throw {code:'http',status:r.status,message:m}}
+  return r.status===204?null:r.json();
+}
+function gMsg(e){
+  if(e&&e.code==='http')return e.status===403?'Google no dejó guardar. Revisá que la API de Calendar esté activada y que tu cuenta esté como usuario de prueba.':'Google Calendar respondió con un error'+(e.message?': '+String(e.message).slice(0,100):'.');
+  return 'No se pudo hablar con Google. Se reintenta solo.';
+}
+/* Una nota hecha queda en el calendario con ✓ adelante. */
+function noteEvent(t){
+  const j=t.jobId?getJob(t.jobId):null;
+  const ev={summary:(t.done?'✓ ':'')+t.text,
+    description:[j?'Trabajo: '+j.client+(j.type?' — '+j.type:''):'','Anotado desde Gestión Agrimensor.'].filter(Boolean).join('\n'),
+    extendedProperties:{private:{ga:'1',noteId:String(t.id),jobId:t.jobId||''}}};
+  if(t.time){const [h,m]=t.time.split(':').map(Number);const e=pdate(t.date);e.setHours(h,m+30);
+    ev.start={dateTime:t.date+'T'+t.time+':00',timeZone:TZ,date:null};ev.end={dateTime:ymd(e)+'T'+hm(e)+':00',timeZone:TZ,date:null}}
+  else{ev.start={date:t.date,dateTime:null,timeZone:null};ev.end={date:ymd(addDays(pdate(t.date),1)),dateTime:null,timeZone:null}}
+  return ev;
+}
+function eventNote(ev,t){
+  const p=(ev.extendedProperties&&ev.extendedProperties.private)||{},st=ev.start||{},sum=String(ev.summary||'');
+  const was=t&&t.done,done=DONE_RX.test(sum);
+  t=Object.assign(t||{id:p.noteId||uid(),created:ev.created||new Date().toISOString()},
+    {text:sum.replace(DONE_RX,'').trim()||'(sin título)',date:st.date||String(st.dateTime||'').slice(0,10),time:st.dateTime?String(st.dateTime).slice(11,16):'',
+     jobId:p.jobId||'',done,gId:ev.id,gUpd:ev.updated,dirty:false});
+  if(done&&!was)t.completed=new Date().toISOString();
+  return t;
+}
+async function gSync(){
+  if(gBusy){gAgain=true;return}
+  if(!gClientId()||!gs.linked||!gTokenOk()||!navigator.onLine){refresh();return}
+  gBusy=true;gErr='';refresh();
+  try{
+    if(!gs.calId){
+      const l=await gApi('GET','/users/me/calendarList?minAccessRole=owner&maxResults=250');const c=(l.items||[]).find(x=>x.summary===AG_CAL);
+      gs.calId=c?c.id:(await gApi('POST','/calendars',{summary:AG_CAL,timeZone:TZ,description:'Notas de la Agenda de Gestión Agrimensor.'})).id;gSave();
+    }
+    const cal='/calendars/'+encodeURIComponent(gs.calId)+'/events';
+    for(const id of [...(gs.del||[])]){try{await gApi('DELETE',cal+'/'+encodeURIComponent(id))}catch(e){if(e.code!=='gone')throw e}gs.del=(gs.del||[]).filter(x=>x!==id);gSave()}
+    /* Primero se sube lo cambiado acá, después se baja lo de Google. */
+    for(const t of tasks.filter(t=>t.dirty&&t.date&&(t.gId||!t.done))){
+      const sent=t.updatedAt;let r=null;
+      if(t.gId){try{r=await gApi('PATCH',cal+'/'+encodeURIComponent(t.gId),noteEvent(t))}catch(e){if(e.code!=='gone')throw e}}
+      if(!r)r=await gApi('POST',cal,JSON.parse(JSON.stringify(noteEvent(t),(k,x)=>x===null?undefined:x)));
+      t.gId=r.id;t.gUpd=r.updated;if(t.updatedAt===sent)t.dirty=false;writeLocal();
+    }
+    const from=ymd(addDays(new Date(),-120)),to=ymd(addDays(new Date(),400));
+    let items=[],pt='';
+    do{const r=await gApi('GET',cal+`?singleEvents=true&maxResults=2500&timeMin=${from}T00:00:00Z&timeMax=${to}T00:00:00Z`+(pt?'&pageToken='+encodeURIComponent(pt):''));items=items.concat(r.items||[]);pt=r.nextPageToken||''}while(pt);
+    const byG=new Map(tasks.filter(t=>t.gId).map(t=>[t.gId,t])),seen=new Set();
+    items.forEach(ev=>{
+      if(ev.status==='cancelled')return;seen.add(ev.id);
+      const t=byG.get(ev.id);
+      if(t){if(!t.dirty&&ev.updated!==t.gUpd)eventNote(ev,t);return}
+      const p=(ev.extendedProperties&&ev.extendedProperties.private)||{};const mine=p.noteId&&getNote(p.noteId);
+      if(mine){if(mine.dirty)mine.gId=ev.id;else eventNote(ev,mine)}else tasks.push(eventNote(ev));
+    });
+    /* Lo que se borró en Google se borra acá (si no se tocó en el celular mientras tanto). */
+    tasks=tasks.filter(t=>!(t.gId&&!t.dirty&&!seen.has(t.gId)&&t.date>=from&&t.date<to));
+    gs.last=new Date().toISOString();gSave();writeLocal();
+  }catch(e){gErr=e&&e.code==='auth'?'':gMsg(e)}
+  finally{gBusy=false;refresh();if(gAgain){gAgain=false;gSync()}}
+}
+function gSoon(){clearTimeout(gTimer);gTimer=setTimeout(gSync,1500)}
+function noteSave(t){t.dirty=true;saveTask(t);gSoon()}
+function noteDel(t){if(t.gId){gs.del=[...(gs.del||[]),t.gId];gSave()}removeTask(t);gSoon()}
+function gStatusHtml(){
+  const n=gPending(),pend=n?` · ${n} cambio${n>1?'s':''} sin subir`:'';
+  if(!gClientId())return `<div class="gs">Google Calendar sin configurar.<button class="btn sm" data-act="config">Configurar</button></div>`;
+  if(!gs.linked)return `<div class="gs">Todavía no está conectada a Google Calendar.<button class="btn sm primary" data-act="gauth">Conectar con Google</button></div>`;
+  if(gBusy)return `<div class="gs">Sincronizando con Google Calendar…</div>`;
+  if(gErr)return `<div class="gs err">${esc(gErr)}<button class="btn sm" data-act="gsync">Reintentar</button></div>`;
+  if(!gTokenOk())return `<div class="gs">Google Calendar en pausa${pend}.<button class="btn sm primary" data-act="gauth">Actualizar</button></div>`;
+  const m=gs.last?Math.floor((Date.now()-new Date(gs.last).getTime())/60000):null;
+  return `<div class="gs ok"><span><b>✓ En Google Calendar</b>${m===null?'':m<1?' · recién':' · hace '+(m<60?m+' min':Math.floor(m/60)+' h')}${pend}</span><button class="btn sm" data-act="gsync" aria-label="Sincronizar ahora">↻</button></div>`;
+}
+
+/* ----- Pantallas ----- */
+function noteRow(t,showDay){
+  const j=t.jobId?getJob(t.jobId):null,td=today(),late=!t.done&&t.date<td;
+  const sub=[];
+  if(showDay||late)sub.push(`<span class="${late?'late':''}">${t.date===td?'hoy':fmtDay(t.date)}</span>`);
+  if(t.time)sub.push(`<span class="num">${esc(t.time)} hs</span>`);
+  if(j)sub.push(`<span class="chip ${jCls(j)}">${esc(j.client)}</span>`);
+  return `<div class="row ${t.done?'done':''}"><input type="checkbox" class="check" data-act="note" data-t="${esc(t.id)}" ${t.done?'checked':''} aria-label="${t.done?'Volver a pendiente':'Marcar hecha'}">
+    <div class="main tap" data-act="editnote" data-t="${esc(t.id)}"><div class="t1 note-t">${esc(t.text)}</div>${sub.length?`<div class="t2">${sub.join('')}</div>`:''}</div>
+    ${t.done?`<button class="small-act" data-act="delnote" data-t="${esc(t.id)}">Borrar</button>`:''}</div>`;
+}
+function notesTodayHtml(){
+  const td=today(),open=tasks.filter(t=>!t.done);
+  const list=open.filter(t=>t.date<=td).sort(noteOrder),next=open.length-list.length;
+  return `<div class="block"><div class="label">Agenda de hoy <span class="count">${list.length?list.length+' pendiente'+(list.length>1?'s':''):''}</span></div><div class="rows">
+    <form class="add-line" data-form="notetoday"><input id="ntText" placeholder="Anotar algo para hoy…" autocomplete="off" enterkeyhint="done"><button class="btn sm primary" type="submit">Agregar</button></form>
+    ${list.map(t=>noteRow(t,false)).join('')}
+    <div class="add-line"><button class="link" data-act="tab" data-v="agenda">Ver toda la agenda${next?` · ${next} más adelante`:''}</button></div></div></div>`;
+}
+function jobOptions(sel){
+  const list=jobs.filter(j=>isActive(j)||String(j.id)===String(sel)).sort((a,b)=>String(a.client).localeCompare(String(b.client),'es'));
+  return `<option value="">Sin trabajo</option>`+list.map(j=>`<option value="${esc(j.id)}" ${String(j.id)===String(sel)?'selected':''}>${esc(j.client)}${j.type?' · '+esc(j.type):''}</option>`).join('');
+}
+function notesHtml(){
+  const t0=new Date(),td=today(),tm=ymd(addDays(t0,1)),we=ymd(addDays(weekStart(t0),7)),mon=ymd(addDays(weekStart(t0),7)),d=agDate();
+  const open=tasks.filter(t=>!t.done).sort(noteOrder);
+  const groups=[['Atrasadas',open.filter(t=>t.date<td)],['Hoy',open.filter(t=>t.date===td)],['Mañana',open.filter(t=>t.date===tm)],['Esta semana',open.filter(t=>t.date>tm&&t.date<we)],['Más adelante',open.filter(t=>t.date>tm&&t.date>=we)]];
+  const quick=[['Hoy',td],['Mañana',tm],['Lunes',mon]].filter((q,i,a)=>a.findIndex(x=>x[1]===q[1])===i);
+  let h=`<section class="view">${gStatusHtml()}
+    <form class="panel ag-add" data-form="note">
+      <div class="qform"><input id="agText" placeholder="Anotar: hablar con Mario, medir en…" autocomplete="off" enterkeyhint="done" aria-label="Qué hay que hacer"><button class="btn primary" type="submit">Agregar</button></div>
+      <div class="tog">${quick.map(([l,v])=>`<button type="button" data-act="agdate" data-d="${v}" aria-pressed="${d===v}">${l}${l==='Hoy'?'':' <span class="num">'+fmtDay(v).split(' ')[1]+'</span>'}</button>`).join('')}${quick.some(q=>q[1]===d)?'':`<button type="button" aria-pressed="true">${fmtDay(d)}</button>`}</div>
+      <div class="ag-opts"><input type="date" class="date-in" data-agdate value="${esc(d)}" aria-label="Elegir otra fecha"><input type="time" class="date-in" data-agtime value="${esc(ui.ag.time)}" aria-label="Hora (opcional)"><select data-agjob aria-label="Trabajo (opcional)">${jobOptions(ui.ag.job)}</select></div>
+    </form>`;
+  if(!open.length)h+=`<div class="rows"><div class="empty">No tenés nada pendiente en la agenda.</div></div>`;
+  groups.forEach(([name,list])=>{if(!list.length)return;
+    h+=`<div class="block"><div class="label"><span class="${name==='Atrasadas'?'late':''}">${name}</span> <span class="count">${list.length}</span></div><div class="rows">${list.map(t=>noteRow(t,!['Hoy','Mañana'].includes(name))).join('')}</div></div>`});
+  const jobTasks=[];jobs.forEach(j=>(j.tasks||[]).forEach(t=>{if(!t.done)jobTasks.push({j,t})}));
+  if(jobTasks.length)h+=`<div class="block"><div class="label">Tareas de trabajos <span class="count">${jobTasks.length}</span></div><div class="rows">
+    ${jobTasks.map(({j,t})=>`<div class="row"><input type="checkbox" class="check" data-act="jobtask" data-id="${esc(j.id)}" data-t="${esc(t.id)}" aria-label="Marcar hecha"><div class="main tap" data-act="open" data-id="${esc(j.id)}"><div class="t1 note-t">${esc(t.text)}</div><div class="t2"><span class="chip ${jCls(j)}">${esc(j.client)}</span></div></div></div>`).join('')}</div></div>`;
+  const done=tasks.filter(t=>t.done).sort((a,b)=>String(b.completed||b.date).localeCompare(String(a.completed||a.date)));
+  if(done.length)h+=`<div class="block"><button class="btn full" data-act="showdone">${ui.ag.showDone?'Ocultar hechas':'Ver hechas ('+done.length+')'}</button>${ui.ag.showDone?`<div class="rows">${done.slice(0,50).map(t=>noteRow(t,true)).join('')}</div>`:''}</div>`;
+  return h+`</section>`;
+}
+function noteSheet(s){
+  const t=getNote(s.id);
+  return `<div class="sheet-head"><div class="main"><h2>Nota de la agenda</h2><div class="sub">${t.gId&&!t.dirty?'Guardada también en Google Calendar':'Guardada en el celular'}</div></div>${closeBtn}</div>
+  <form class="form" data-form="noteedit" data-t="${esc(t.id)}">
+    <div class="field"><label for="nText">Qué hay que hacer</label><textarea id="nText" rows="2">${esc(t.text)}</textarea></div>
+    <div class="two"><div class="field"><label for="nDate">Fecha</label><input id="nDate" type="date" value="${esc(t.date)}"></div>
+      <div class="field"><label for="nTime">Hora (opcional)</label><input id="nTime" type="time" value="${esc(t.time||'')}"></div></div>
+    <div class="field"><label for="nJob">Trabajo (opcional)</label><select id="nJob">${jobOptions(t.jobId)}</select></div>
+    <div class="err" id="formErr"></div>
+    <button class="btn primary full" type="submit">Guardar cambios</button>
+    <button class="btn full" type="button" data-act="notedone" data-t="${esc(t.id)}">${t.done?'Volver a pendiente':'Marcar como hecha'}</button>
+    ${t.jobId&&getJob(t.jobId)?`<button class="btn full" type="button" data-act="open" data-id="${esc(t.jobId)}">Abrir ficha del trabajo</button>`:''}
+    <button class="btn danger full" type="button" data-act="delnote" data-t="${esc(t.id)}">Borrar nota</button>
+  </form>`;
 }
 
 async function saveFile(filename,data){
@@ -1282,7 +1483,7 @@ function showImport(data){
 }
 async function doImport(data){
   const js=data.jobs.map(normJob);
-  const ts=(data.tasks||[]).filter(t=>t&&t.id);
+  const ts=(data.tasks||[]).filter(t=>t&&t.id).map(normNote);
   settings=normSettings(data.settings);
   const map=new Map(jobs.map(j=>[String(j.id),j]));js.forEach(j=>map.set(String(j.id),j));jobs=[...map.values()];
   const tm=new Map(tasks.map(t=>[String(t.id),t]));ts.forEach(t=>tm.set(String(t.id),t));tasks=[...tm.values()];
@@ -1329,7 +1530,16 @@ document.addEventListener('click',e=>{
     case 'delexp':if(j&&armed(el,'Tocá de nuevo para quitar')){j.expenses.splice(k,1);saveJob(j);openSheet({kind:'job',id})}break;
     case 'jobtask':{if(!j)break;const t=(j.tasks||[]).find(x=>String(x.id)===el.dataset.t);if(t){t.done=el.checked;t.completed=el.checked?new Date().toISOString():undefined;saveJob(j);if(el.checked)toast('Tarea hecha')}break}
     case 'deljobtask':if(j){j.tasks=j.tasks.filter(x=>String(x.id)!==el.dataset.t);saveJob(j)}break;
-    case 'task':{const t=tasks.find(x=>String(x.id)===el.dataset.t);if(t){t.done=true;t.completed=new Date().toISOString();saveTask(t);toast('Tarea hecha')}break}
+    case 'note':{const t=getNote(el.dataset.t);if(t){t.done=el.checked;t.completed=el.checked?new Date().toISOString():undefined;noteSave(t);toast(el.checked?'Hecho':'Vuelve a pendiente')}break}
+    case 'notedone':{const t=getNote(el.dataset.t);if(t){t.done=!t.done;t.completed=t.done?new Date().toISOString():undefined;noteSave(t);closeSheet();toast(t.done?'Hecho':'Vuelve a pendiente')}break}
+    case 'editnote':openSheet({kind:'note',id:el.dataset.t});break;
+    case 'delnote':{const t=getNote(el.dataset.t);if(t&&armed(el,'¿Borrar?')){if(ui.sheet&&ui.sheet.kind==='note')closeSheet();noteDel(t);toast('Nota borrada')}break}
+    case 'agdate':ui.ag.date=el.dataset.d;renderView();break;
+    case 'agfor':closeSheet();ui.ag.job=id;ui.view='agenda';renderView();window.scrollTo(0,0);setTimeout(()=>$('#agText')?.focus(),0);break;
+    case 'showdone':ui.ag.showDone=!ui.ag.showDone;renderView();break;
+    case 'gauth':gAuth();break;
+    case 'gsync':if(gTokenOk())gSync();else gAuth();break;
+    case 'gdisconnect':if(armed(el,'Tocá de nuevo para desconectar')){try{if(gs.token&&gisReady())google.accounts.oauth2.revoke(gs.token,()=>{})}catch(err){}gs.token='';gs.linked=false;gErr='';gSave();refresh();toast('Desconectado de Google')}break;
     case 'copymsg':{const txt=$('#stageMsg').textContent;const sel=()=>{const r=document.createRange();r.selectNodeContents($('#stageMsg'));const s=getSelection();s.removeAllRanges();s.addRange(r)};
       try{navigator.clipboard.writeText(txt).then(()=>toast('Mensaje copiado'),()=>{sel();toast('Texto seleccionado: copialo')})}catch(err){sel();toast('Texto seleccionado: copialo')}break}
     case 'setfield':if(j){j.fieldDate=el.dataset.d;saveJob(j);toast(el.dataset.d?'Medición: '+fmtDay(el.dataset.d):'Fecha quitada');calSync(j.id)}break;
@@ -1361,6 +1571,9 @@ document.addEventListener('input',e=>{
 });
 document.addEventListener('change',e=>{
   const t=e.target;
+  if(t.dataset.agdate!=null){ui.ag.date=t.value||null;renderView();return}
+  if(t.dataset.agtime!=null){ui.ag.time=t.value;return}
+  if(t.dataset.agjob!=null){ui.ag.job=t.value;return}
   if(t.dataset.fieldDate!=null){const j=getJob(t.dataset.fieldDate);if(j){j.fieldDate=t.value;saveJob(j);if(t.value)toast('Medición: '+fmtDay(t.value));calSync(j.id)}return}
   if(t.dataset.obs!=null){const j=getJob(t.dataset.obs);if(j){const val=t.value.trim();if(val!==obsOf(j)||j.obs===undefined){j.obs=val;if(j.loc&&!looksPartida(j.loc))j.loc='';saveJob(j);toast('Observación guardada')}}return}
   if(t.dataset.expName!=null){const v=parseMoney(t.value);if(v>=0){settings.expenses[t.dataset.expName]=v;saveSettings();toast('Importe guardado')}}
@@ -1382,7 +1595,17 @@ document.addEventListener('submit',e=>{
   const err=m=>{const el=$('#formErr');if(el)el.textContent=m;else toast(m)};
   const j=f.dataset.id?getJob(f.dataset.id):null;
   switch(f.dataset.form){
-    case 'task':{const text=v('newTask');if(!text)return;$('#newTask').value='';const t={id:uid(),text,done:false,created:new Date().toISOString()};tasks.push(t);saveTask(t);setTimeout(()=>$('#newTask')?.focus(),0);break}
+    case 'note':case 'notetoday':{
+      const box=f.dataset.form==='note'?'agText':'ntText',text=v(box);if(!text){toast('Escribí qué hay que hacer');$('#'+box)?.focus();return}
+      const full=f.dataset.form==='note',date=full?agDate():today();
+      const t={id:uid(),text,date,time:full?ui.ag.time:'',jobId:full?ui.ag.job:'',done:false,created:new Date().toISOString()};
+      $('#'+box).value='';if(full)ui.ag={...ui.ag,date:null,time:'',job:''};
+      tasks.push(t);noteSave(t);toast('Anotado para '+(date===today()?'hoy':fmtDay(date)));setTimeout(()=>$('#'+box)?.focus(),0);break}
+    case 'noteedit':{
+      const t=getNote(f.dataset.t);if(!t)return;const text=(document.getElementById('nText')?.value||'').trim(),date=v('nDate');
+      if(!text){err('Escribí qué hay que hacer.');return}if(!date){err('Elegí una fecha.');return}
+      Object.assign(t,{text,date,time:v('nTime'),jobId:v('nJob')});noteSave(t);closeSheet();toast('Nota guardada');break}
+    case 'gcid':{settings.gClientId=v('gCid');gTokenClient=null;saveSettings();if(gClientId())gLoad().catch(()=>{});toast('Guardado');break}
     case 'jobtask':{const text=v('newJobTask');if(!text||!j)return;j.tasks=j.tasks||[];j.tasks.unshift({id:uid(),text,done:false,created:new Date().toISOString()});saveJob(j);renderSheet();setTimeout(()=>$('#newJobTask')?.focus(),0);break}
     case 'quick':{if(!j)return;const inp=f.querySelector('input');const a=parseMoney(inp&&inp.value);if(!(a>0)){toast('Escribí el importe del presupuesto');inp&&inp.focus();return}if(inp)inp.value='';j.budget=a;saveJob(j);toast(j.client+': '+money(a)+' · pasa a Presupuesto enviado');break}
     case 'quicknew':{const client=v('qnClient'),type=v('qnType')||workTypes()[0]||'';if(!client){toast('Escribí el cliente o el lugar');$('#qnClient')?.focus();return}$('#qnClient').value='';
@@ -1424,8 +1647,13 @@ window.addEventListener('unhandledrejection',e=>{const r=e.reason;if(r&&r.code)r
 /* ===================== Inicio ===================== */
 (function init(){
   const l=readLocal();
-  if(l){jobs=(l.jobs||[]).map(normJob);tasks=l.tasks||[];settings=normSettings(l.settings)}
+  if(l){jobs=(l.jobs||[]).map(normJob);tasks=(l.tasks||[]).map(normNote);settings=normSettings(l.settings)}
   renderView();setSaveState();
+  /* Agenda: se prepara Google para que el botón responda al primer toque y se sincroniza si el permiso sigue vigente. */
+  if(gClientId()&&gs.linked){gLoad().catch(()=>{});gSync()}
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){if(gTokenOk())gSync();else refresh()}});
+  window.addEventListener('online',()=>{if(gTokenOk())gSync()});
+  setInterval(()=>{if(document.visibilityState==='visible'&&gTokenOk())gSync()},5*60000);
   setTimeout(connect,0);
   setTimeout(()=>getMcp().then(()=>refresh(true)),0);
   if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
