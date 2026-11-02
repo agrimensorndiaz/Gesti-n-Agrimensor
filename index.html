@@ -496,7 +496,7 @@ function mergeSnap(kind,current,docs,norm){
   pend[kind].forEach((o,id)=>{if(!out.has(id)||String(out.get(id).updatedAt||'')<String(o.updatedAt||''))out.set(id,o)});
   return [...out.values()];
 }
-function saveJob(j){if(db)putDoc('jobs',j);else{j.updatedAt=stamp();writeLocal()}refresh();if(gs.linked&&measDirty(j))gSoon()}
+function saveJob(j){if(db)putDoc('jobs',j);else{j.updatedAt=stamp();writeLocal()}refresh();if(gs.linked)gSoon()}
 function removeJob(j){jobs=jobs.filter(x=>x!==j);if(db)delDoc('jobs',j);else writeLocal();refresh()}
 let settingsPend=null;
 function saveSettings(){settings.updatedAt=stamp();if(db){const body=clean(settings),st=settings.updatedAt;settingsPend=st;queueWrite(()=>db.doc('app/settings').set(body)).then(()=>{if(settingsPend===st)settingsPend=null}).catch(()=>{})}else writeLocal();refresh()}
@@ -1047,7 +1047,7 @@ let gs=(()=>{try{return JSON.parse(localStorage.getItem(GKEY)||'null')||{}}catch
 function gSave(){try{localStorage.setItem(GKEY,JSON.stringify(gs))}catch(e){}}
 const gClientId=()=>String(GOOGLE_CLIENT_ID||settings.gClientId||'').trim();
 const gTokenOk=()=>!!(gs.token&&gs.exp>Date.now()+60000);
-const gPending=()=>tasks.filter(t=>t.dirty&&t.date).length+(gs.del||[]).length+jobs.filter(measDirty).length;
+const gPending=()=>tasks.filter(t=>t.dirty&&t.date).length+(gs.del||[]).length+jobs.filter(j=>measDirty(j)||dataDirty(j)).length;
 let gBusy=false,gAgain=false,gErr='',gTimer=null,gTokenClient=null,gLoading=null;
 const gisReady=()=>!!(window.google&&google.accounts&&google.accounts.oauth2);
 function gLoad(){
@@ -1116,6 +1116,119 @@ function eventNote(ev,t){
   if(done&&!was)t.completed=new Date().toISOString();
   return t;
 }
+/* ----- Trabajos en Google: calendario "Gestión Agrimensor · Datos" -----
+   Cada trabajo es un evento de día completo con sus datos en la descripción, entre "=== datos ===" y "=== fin ===".
+   Así Claude (con el conector de Google Calendar) puede leer, cargar y cambiar trabajos, y la app los trae al sincronizar.
+   Si se cambia lo mismo en los dos lados, gana lo del celular. Un trabajo borrado en Google no se borra acá: se vuelve a subir. */
+const DATA_CAL='Gestión Agrimensor · Datos',DATA_RX=/===\s*datos\s*===([\s\S]*?)===\s*fin\s*===/i,README_V='1';
+const SYNC_KEYS=['gMeasId','gMeasSig','gDataId','gDataSig','gDataUpd','updatedAt','calEventId','calDate','calSig','tasks','loc'];
+function jobData(j){
+  const o={};Object.keys(j).sort().forEach(k=>{const x=j[k];if(!SYNC_KEYS.includes(k)&&x!==undefined&&x!==null&&x!=='')o[k]=x});
+  if(!o.obs&&obsOf(j))o.obs=obsOf(j);
+  return o;
+}
+const dataSig=j=>JSON.stringify(jobData(j));
+const dataDirty=j=>dataSig(j)!==j.gDataSig;
+function dataEvent(j){
+  const d=owed(j),pe=pendExp(j);
+  const lines=[`Cliente: ${j.client}`,`Tipo: ${j.type||'—'} · Etapa: ${phaseOf(j)}`,
+    `Presupuesto: ${money(j.budget)} · Cobrado: ${money(j.paid)}${d?' · Falta cobrar: '+money(d):''}`,
+    j.phone?'Tel.: '+j.phone:null,j.partida?'Partida: '+j.partida:null,
+    j.fieldDate?'Medición: '+fmtDate(j.fieldDate)+(j.fieldTime?' '+j.fieldTime+' hs':''):null,
+    pe?'Gastos sin pagar: '+money(pe):null,obsOf(j)?'Obs.: '+obsOf(j):null,
+    '','Para cambiar algo, editá el bloque de datos (ver el evento "LÉEME").','=== datos ===',JSON.stringify(jobData(j)),'=== fin ==='];
+  const ev={summary:j.client+' · '+phaseOf(j),description:lines.filter(x=>x!==null).join('\n'),transparency:'transparent',
+    extendedProperties:{private:{ga:'1',dataJobId:String(j.id)}}};
+  return setWhen(ev,pdate(j.start)?j.start:today(),'',0);
+}
+/* La descripción puede venir con HTML si se editó en la página de Google Calendar. */
+const plainText=s=>String(s||'').replace(/<br\s*\/?>/gi,'\n').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');
+function parseData(ev){
+  const m=plainText(ev.description).match(DATA_RX);if(!m)return null;
+  try{const o=JSON.parse(m[1].trim().replace(/[“”]/g,'"'));return o&&typeof o==='object'&&!Array.isArray(o)?o:null}catch(e){return null}
+}
+const paySum=ps=>(ps||[]).reduce((a,p)=>a+(Number(p.amount)||0),0);
+/* Datos que llegaron de Google: se acomodan lo cobrado, la fecha de etapa y los números de recibo. */
+function applyData(o,j){
+  const sync={};if(j)SYNC_KEYS.forEach(k=>{if(j[k]!==undefined)sync[k]=j[k]});
+  const n=normJob({...o,...sync,id:j?j.id:String(o.id||uid())});
+  n.client=String(n.client||'Sin nombre').trim();if(!pdate(n.start))n.start=today();
+  const now=new Date().toISOString(),oldPays=j?(j.payments||[]):[];
+  n.payments=n.payments.map(p=>({...p,amount:typeof p.amount==='number'?p.amount:parseMoney(p.amount),date:p.date||today()}));
+  /* "paid" no hace falta tocarlo: se suma lo que se agregó en "payments". */
+  if(j&&(o.paid===undefined||Number(o.paid)===Number(j.paid)))n.paid=(Number(j.paid)||0)+paySum(n.payments)-paySum(oldPays);
+  else if(!j&&o.paid===undefined)n.paid=paySum(n.payments);
+  let rn=Number(nextReceipt());n.payments.forEach((p,k)=>{if(k>=oldPays.length&&!p.receiptNumber)p.receiptNumber=String(rn++).padStart(4,'0')});
+  if(!j)n.stageAt=o.stageAt||now;
+  else if(n.stage!==j.stage&&(!o.stageAt||o.stageAt===j.stageAt))n.stageAt=now;
+  else if(!n.stageAt)n.stageAt=j.stageAt;
+  if(n.stage==='Presupuesto'&&n.budget>0&&!(j&&j.budget>0)&&!n.quotedAt)n.quotedAt=now;
+  return n;
+}
+const README_TXT=`Calendario de datos de la app Gestión Agrimensor (Ing. Agrim. Nicolás Díaz). Cada evento es un trabajo.
+La app del celular lo sincroniza: lo que se cambie acá llega al celular la próxima vez que sincroniza (al abrirla o a los pocos minutos).
+
+CAMBIAR UN TRABAJO: editar solo el JSON que está entre "=== datos ===" y "=== fin ===" (JSON válido, en una línea). No cambiar "id". El resto de la descripción y el título los rehace la app.
+TRABAJO NUEVO: crear un evento de día completo en este calendario (cualquier fecha; mejor la de hoy), título = cliente, y en la descripción:
+=== datos ===
+{"client":"Juan Pérez","type":"Mensura","phone":"3482 15 456789","obs":"Lugar: Las Garzas"}
+=== fin ===
+Sin "id": la app lo pone. Si no se pone "stage", queda "Por presupuestar".
+NO BORRAR eventos (se vuelven a crear). Para borrar un trabajo, hacerlo desde la app.
+
+CAMPOS:
+client (texto), type (tipo de trabajo: Mensura, VEP, Mensura para prescripción adquisitiva, etc.), phone, partida (03-08-00 514819/0001), exp (expediente), obs (observaciones), priority (1 alta, 2 media, 3 baja),
+start (fecha de inicio AAAA-MM-DD), stage (etapa, ver abajo), stageAt (fecha y hora en que entró a la etapa; si se cambia stage, se puede omitir), budget (presupuesto en pesos, número),
+paid (total cobrado: NO tocarlo, la app lo calcula), payments (cobros: [{"amount":500000,"date":"2026-11-02","method":"Efectivo"}]; para registrar un cobro, agregar uno; el recibo lo numera la app),
+expenses (gastos: [{"name":"CCU","amount":50000,"paid":false}]), fieldDate (fecha de medición AAAA-MM-DD), fieldTime (hora "08:30", opcional),
+quotedAt (cuándo se mandó el presupuesto), followedAt (última vez que se consultó al cliente por el presupuesto), lostAt (si está, el cliente no aceptó el presupuesto),
+rev (idas y vueltas con Catastro: [{"back":"fecha en que volvió con correcciones","sent":"fecha en que se presentaron"}]).
+
+ETAPAS (stage), en orden: "Presupuesto" (sin budget = por presupuestar; con budget = presupuesto enviado), "Medición", "Planos y notas", "Libro digital / Previa", "Correcciones", "Aprobado", "Entrega de documentación", "Terminado".
+Previa y Correcciones van y vuelven: cuando Catastro devuelve, stage "Correcciones" y agregar {"back":"fecha"} a rev; cuando se presentan, stage "Libro digital / Previa" y poner "sent" en ese mismo elemento.
+
+Las notas y cosas para hacer NO van acá: van en el calendario "Agenda Agrimensor" (para marcar hecha, "✓ " al principio del título). Las mediciones aparecen solas en "Agenda Agrimensor" como "Medir: …".`;
+let gDataBad=0;
+async function gDataSync(){
+  if(!gs.dataCalId){
+    const l=await gApi('GET','/users/me/calendarList?minAccessRole=owner&maxResults=250');const c=(l.items||[]).find(x=>x.summary===DATA_CAL);
+    gs.dataCalId=c?c.id:(await gApi('POST','/calendars',{summary:DATA_CAL,timeZone:TZ,description:'Trabajos de Gestión Agrimensor. Ver el evento LÉEME.'})).id;gSave();
+  }
+  const cal='/calendars/'+encodeURIComponent(gs.dataCalId)+'/events';
+  for(const id of [...(gs.ddel||[])]){try{await gApi('DELETE',cal+'/'+encodeURIComponent(id))}catch(e){if(e.code!=='gone')throw e}gs.ddel=(gs.ddel||[]).filter(x=>x!==id);gSave()}
+  if(gs.readmeV!==README_V){
+    const ev=setWhen({summary:'LÉEME · cómo cargar y cambiar trabajos (para Claude)',description:README_TXT,transparency:'transparent',extendedProperties:{private:{ga:'1',readme:'1'}}},'2026-01-01','',0);
+    let r=null;if(gs.readmeId){try{r=await gApi('PATCH',cal+'/'+encodeURIComponent(gs.readmeId),ev)}catch(e){if(e.code!=='gone')throw e}}
+    if(!r)r=await gApi('POST',cal,noNull(ev));gs.readmeId=r.id;gs.readmeV=README_V;gSave();
+  }
+  const up=async()=>{for(const j of jobs.filter(dataDirty)){
+    const sig=dataSig(j),ev=dataEvent(j);let r=null;
+    if(j.gDataId){try{r=await gApi('PATCH',cal+'/'+encodeURIComponent(j.gDataId),ev)}catch(e){if(e.code!=='gone')throw e}}
+    if(!r)r=await gApi('POST',cal,noNull(ev));
+    j.gDataId=r.id;j.gDataSig=sig;j.gDataUpd=r.updated;writeLocal();
+  }};
+  await up();
+  let items=[],pt='';
+  do{const r=await gApi('GET',cal+'?singleEvents=true&maxResults=2500'+(pt?'&pageToken='+encodeURIComponent(pt):''));items=items.concat(r.items||[]);pt=r.nextPageToken||''}while(pt);
+  const seen=new Set();let got=0;gDataBad=0;
+  for(const ev of items){
+    if(ev.status==='cancelled')continue;const p=(ev.extendedProperties&&ev.extendedProperties.private)||{};
+    if(p.readme){if(ev.id!==gs.readmeId){gs.ddel=[...(gs.ddel||[]),ev.id];gSave()}continue}
+    seen.add(ev.id);
+    let j=(p.dataJobId&&getJob(p.dataJobId))||jobs.find(x=>x.gDataId===ev.id)||null;
+    if(j&&j.gDataId&&j.gDataId!==ev.id){gs.ddel=[...(gs.ddel||[]),ev.id];gSave();continue}  /* evento repetido */
+    if(j&&ev.updated===j.gDataUpd)continue;
+    const o=parseData(ev);if(!o){if(!j)gDataBad++;continue}
+    if(j&&dataDirty(j))continue;  /* cambio del celular sin subir: gana el celular */
+    if(!j&&o.id&&getJob(o.id))j=getJob(o.id);
+    const n=applyData(o,j);n.gDataId=ev.id;n.gDataUpd=ev.updated;n.gDataSig='';
+    if(j)jobs[jobs.indexOf(j)]=n;else jobs.push(n);
+    got++;
+  }
+  jobs.forEach(j=>{if(j.gDataId&&!seen.has(j.gDataId))j.gDataSig=''});  /* borrado en Google: se vuelve a subir */
+  if(got){writeLocal();toast(got===1?'Llegó 1 cambio de trabajos desde Google':`Llegaron ${got} cambios de trabajos desde Google`)}
+  await up();
+}
 function measFromEvent(ev,j){
   if(!j||String(j.gMeasId)!==String(ev.id)){gs.del=[...(gs.del||[]),ev.id];gSave();gAgain=true;return}  /* trabajo borrado o evento repetido */
   const st=ev.start||{},d=st.date||String(st.dateTime||'').slice(0,10),tm=st.dateTime?String(st.dateTime).slice(11,16):'';
@@ -1139,6 +1252,7 @@ async function gSync(){
       if(!r)r=await gApi('POST',cal,noNull(noteEvent(t)));
       t.gId=r.id;t.gUpd=r.updated;if(t.updatedAt===sent)t.dirty=false;writeLocal();
     }
+    await gDataSync();
     for(const j of jobs.filter(measDirty)){
       const sig=measSig(j),ev=j.gMeasId;let r=null;
       if(!sig){if(ev){try{await gApi('DELETE',cal+'/'+encodeURIComponent(ev))}catch(e){if(e.code!=='gone')throw e}}delete j.gMeasId;j.gMeasSig='';writeLocal();continue}
@@ -1189,7 +1303,7 @@ function gStatusHtml(){
   if(gErr)return `<div class="gs err">${esc(gErr)}<button class="btn sm" data-act="gsync">Reintentar</button></div>`;
   if(!gTokenOk())return `<div class="gs">Google Calendar en pausa${pend}.<button class="btn sm primary" data-act="gauth">Actualizar</button></div>`;
   const m=gs.last?Math.floor((Date.now()-new Date(gs.last).getTime())/60000):null;
-  return `<div class="gs ok"><span><b>✓ En Google Calendar</b>${m===null?'':m<1?' · recién':' · hace '+(m<60?m+' min':Math.floor(m/60)+' h')}${pend}</span><button class="btn sm" data-act="gsync" aria-label="Sincronizar ahora">↻</button></div>`;
+  return `<div class="gs ok"><span><b>✓ En Google Calendar</b>${m===null?'':m<1?' · recién':' · hace '+(m<60?m+' min':Math.floor(m/60)+' h')}${pend}${gDataBad?` · ${gDataBad} trabajo${gDataBad>1?'s':''} de Google sin poder leer`:''}</span><button class="btn sm" data-act="gsync" aria-label="Sincronizar ahora">↻</button></div>`;
 }
 
 /* ----- Pantallas ----- */
@@ -1626,7 +1740,7 @@ document.addEventListener('click',e=>{
     case 'unlost':if(j){delete j.lostAt;saveJob(j);renderSheet();toast('Presupuesto activo de nuevo')}break;
     case 'followed':if(j){j.followedAt=new Date().toISOString();saveJob(j);renderSheet();toast('Te lo recuerdo en 7 días')}break;
     case 'edit':openSheet({kind:'form',id});break;
-    case 'deljob':if(j&&armed(el,'Tocá de nuevo para eliminar')){closeSheet();const ev=j.calEventId;if(j.gMeasId){gs.del=[...(gs.del||[]),j.gMeasId];gSave();gSoon()}
+    case 'deljob':if(j&&armed(el,'Tocá de nuevo para eliminar')){closeSheet();const ev=j.calEventId;if(j.gMeasId||j.gDataId){if(j.gMeasId)gs.del=[...(gs.del||[]),j.gMeasId];if(j.gDataId)gs.ddel=[...(gs.ddel||[]),j.gDataId];gSave();gSoon()}
       tasks.filter(t=>String(t.jobId)===String(j.id)).forEach(t=>{t.jobId='';noteSave(t)});removeJob(j);toast('Trabajo eliminado');
       if(ev&&calOn())getMcp().then(m=>m&&m.callTool(CAL,'delete_event',{eventId:ev,notificationLevel:'NONE'}).catch(()=>{}))}break;
     case 'addpay':openSheet({kind:'payment',id,k:null});break;

@@ -1,5 +1,5 @@
 /* Guarda la app en el celular para que abra sin internet. */
-const V='ga-v6';
+const V='ga-v7';
 const APP=['./','index.html','manifest.webmanifest','icon-192.png','icon-512.png','icon-maskable-512.png','apple-touch-icon.png'];
 /* Google Calendar y el inicio de sesión de Google siempre van directo a internet (nunca desde la copia guardada). */
 const LIVE=['www.googleapis.com','accounts.google.com','oauth2.googleapis.com'];
