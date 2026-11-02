@@ -1061,13 +1061,13 @@ function gAuth(){
   if(!navigator.onLine){toast('Sin señal: las notas se suben cuando vuelva la conexión');return}
   if(!gisReady()){gLoad().then(()=>toast('Listo, tocá de nuevo para conectar'),()=>toast('No se pudo abrir Google. Revisá la conexión.'));return}
   if(!gTokenClient||gTokenClient._cid!==cid){
-    gTokenClient=google.accounts.oauth2.initTokenClient({client_id:cid,scope:G_SCOPE,
+    gTokenClient=google.accounts.oauth2.initTokenClient({client_id:cid,scope:G_SCOPE,...(gs.email?{hint:gs.email,login_hint:gs.email}:{}),
       callback:r=>{if(r&&r.access_token&&google.accounts.oauth2.hasGrantedAllScopes(r,...G_SCOPE.split(' '))){gs.token=r.access_token;gs.exp=Date.now()+(Number(r.expires_in)||3600)*1000;const first=!gs.linked;gs.linked=true;gErr='';gSave();if(first)toast('Conectado con Google Calendar');gSync()}
         else{gErr=r&&r.access_token?'Hay que tildar todos los permisos que pide Google.':'Google no dio permiso.';refresh()}},
       error_callback:e=>{if(e&&e.type==='popup_closed')return;gErr=e&&e.type==='popup_failed_to_open'?'El celular bloqueó la ventana de Google. Probá de nuevo.':'No se pudo conectar con Google.';refresh()}});
     gTokenClient._cid=cid;
   }
-  gTokenClient.requestAccessToken({prompt:gs.linked?'':'consent'});
+  gTokenClient.requestAccessToken({prompt:gs.linked?'':'consent',...(gs.email?{hint:gs.email,login_hint:gs.email}:{})});
 }
 async function gApi(method,path,body){
   const r=await fetch('https://www.googleapis.com/calendar/v3'+path,{method,cache:'no-store',headers:{Authorization:'Bearer '+gs.token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
@@ -1243,6 +1243,8 @@ async function gSync(){
       const l=await gApi('GET','/users/me/calendarList?minAccessRole=owner&maxResults=250');const c=(l.items||[]).find(x=>x.summary===AG_CAL);
       gs.calId=c?c.id:(await gApi('POST','/calendars',{summary:AG_CAL,timeZone:TZ,description:'Notas de la Agenda de Gestión Agrimensor.'})).id;gSave();
     }
+    /* Se guarda el mail de la cuenta para que, al renovar el permiso, Google no pregunte cuál usar. */
+    if(!gs.email){const l=await gApi('GET','/users/me/calendarList?minAccessRole=owner&maxResults=250');const p=(l.items||[]).find(x=>x.primary);if(p){gs.email=p.id;gTokenClient=null;gSave()}}
     const cal='/calendars/'+encodeURIComponent(gs.calId)+'/events';
     for(const id of [...(gs.del||[])]){try{await gApi('DELETE',cal+'/'+encodeURIComponent(id))}catch(e){if(e.code!=='gone')throw e}gs.del=(gs.del||[]).filter(x=>x!==id);gSave()}
     /* Primero se sube lo cambiado acá, después se baja lo de Google. */
