@@ -1,7 +1,7 @@
 /* Guarda la app en el celular para que abra sin internet. */
-const V='ga-v8';
+const V='ga-v9';
 const APP=['./','index.html','manifest.webmanifest','icon-192.png','icon-512.png','icon-maskable-512.png','apple-touch-icon.png'];
-/* Google Calendar y el inicio de sesión de Google siempre van directo a internet (nunca desde la copia guardada). */
+/* Google Calendar y el inicio de sesiÃ³n de Google siempre van directo a internet (nunca desde la copia guardada). */
 const LIVE=['www.googleapis.com','accounts.google.com','oauth2.googleapis.com'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(V).then(c=>c.addAll(APP)).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==V).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
