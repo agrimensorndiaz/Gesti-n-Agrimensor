@@ -155,6 +155,9 @@ main{max-width:760px;margin:0 auto;padding:14px 16px calc(92px + env(safe-area-i
 .fbtn[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 .group-h{display:flex;align-items:center;gap:8px;font-family:var(--f-display);font-weight:600;font-size:15px;margin-top:4px}
 .group-h .count{font-family:var(--f-body);font-weight:500;font-size:13px;color:var(--muted)}
+/* subtítulo por tipo de trabajo dentro de una etapa */
+.type-h{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:6px 0 -2px 2px;font-family:var(--f-display)}
+.type-h .count{font-weight:500;letter-spacing:0}
 
 /* tabla de plata */
 .tbl-wrap{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
@@ -685,6 +688,15 @@ function jobRow(j){
       <div class="t2"><span>${meta.join(' · ')}</span>${toMeasure(j)&&pdate(j.fieldDate)?`<span class="meas">Medir ${fmtDay(j.fieldDate)}</span>`:''}${j.priority===1?'<span class="hi">Prioridad alta</span>':''}${pt?`<span>${pt} tarea${pt>1?'s':''}</span>`:''}${late?`<span class="late">${days} días quieto</span>`:''}</div></div>
     <div class="amt num">${d>0?money(d):quote?money(j.budget):'—'}<small>${d>0?'a cobrar':quote?(j.lostAt?'no aceptó':'presupuestado'):Number(j.budget)>0?'cobrado':'sin importe'}</small></div>${ICON_CHEV}</div>`;
 }
+/* Dentro de cada etapa, los trabajos se juntan por tipo (todos los VEP juntos, las mensuras rurales juntas…).
+   Si en la etapa hay un solo tipo, no se pone subtítulo. Orden: el de la lista de tipos; los tipos nuevos van al final. */
+function typeGroupsHtml(list){
+  const tg=[];list.forEach(j=>{const t=String(j.type||'').trim()||'Sin tipo';const g=tg.find(x=>x[0]===t);g?g[1].push(j):tg.push([t,[j]])});
+  if(tg.length<2)return `<div class="rows">${list.map(jobRow).join('')}</div>`;
+  const ti=t=>{const i=WORK_TYPES.indexOf(t);return i<0?99:i};
+  tg.sort((a,b)=>ti(a[0])-ti(b[0])||a[0].localeCompare(b[0]));
+  return tg.map(([t,l])=>`<div class="type-h">${esc(t)} <span class="count">${l.length}</span></div><div class="rows">${l.map(jobRow).join('')}</div>`).join('');
+}
 function jobsHtml(){
   const arr=filteredJobs();
   const fl=[['active','Activos'],...PHASES.slice(0,8).map(s=>[s,s]),['nodate','Medición sin fecha'],['unpaid','Terminado sin cobrar'],['done','Finalizados'],['all','Todos']];
@@ -694,7 +706,7 @@ function jobsHtml(){
   if(!arr.length){h+=`<div class="rows"><div class="empty">${jobs.length?'No hay trabajos con ese filtro.':'Todavía no cargaste trabajos.'}</div></div>`}
   else{
     const groups=[];arr.forEach(j=>{const p=phaseOf(j);const g=groups.find(x=>x[0]===p);g?g[1].push(j):groups.push([p,[j]])});
-    h+=groups.map(([s,list])=>`<div class="block"><div class="group-h"><span class="dot ${phCls(s)}"></span>${esc(s)} <span class="count">${list.length}</span></div><div class="rows">${list.map(jobRow).join('')}</div></div>`).join('');
+    h+=groups.map(([s,list])=>`<div class="block"><div class="group-h"><span class="dot ${phCls(s)}"></span>${esc(s)} <span class="count">${list.length}</span></div>${typeGroupsHtml(list)}</div>`).join('');
   }
   return h+`</section>`;
 }
